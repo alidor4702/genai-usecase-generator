@@ -74,11 +74,28 @@ def _row_to_precedent(row: dict[str, str]) -> dict[str, object]:
     }
 
 
+def _sanitize_url(url: str) -> str | None:
+    """Strip whitespace, drop URLs with embedded control chars or no scheme."""
+    if not url:
+        return None
+    cleaned = url.strip()
+    if any(c in cleaned for c in "\n\r\t"):
+        return None
+    if not (cleaned.startswith("http://") or cleaned.startswith("https://")):
+        return None
+    return cleaned
+
+
 async def _deep_read_one(client: httpx.AsyncClient, sem: asyncio.Semaphore, url: str) -> str | None:
-    if not url or is_skippable_url(url):
+    cleaned = _sanitize_url(url)
+    if cleaned is None or is_skippable_url(cleaned):
         return None
     async with sem:
-        html = await fetch_html(client, url, timeout_s=DEEP_FETCH_TIMEOUT)
+        try:
+            html = await fetch_html(client, cleaned, timeout_s=DEEP_FETCH_TIMEOUT)
+        except Exception as e:  # belt-and-braces: never let one URL kill the gather
+            logger.debug("deep-read crash for %s: %s", cleaned, type(e).__name__)
+            return None
         if html is None:
             return None
         text = extract_main_text(html)
@@ -110,7 +127,7 @@ async def run(deep_read: bool = True) -> dict[str, int]:
         async with httpx.AsyncClient(headers={"User-Agent": settings.user_agent}) as client:
             results = await asyncio.gather(
                 *(_wrapped(client, p["source_url"] or "") for p in precedents),
-                return_exceptions=False,
+                return_exceptions=True,  # one bad URL must not kill the whole batch
             )
         for p, content in zip(precedents, results, strict=True):
             if isinstance(content, str):
