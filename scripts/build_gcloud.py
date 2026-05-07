@@ -23,7 +23,7 @@ import logging
 import re
 
 import httpx
-from selectolax.parser import HTMLParser, Node
+from selectolax.parser import HTMLParser
 
 from scripts._normalize import make_id, strip_vendor_terms
 from src.config import settings
@@ -83,34 +83,28 @@ async def _fetch(url: str) -> str | None:
 
 
 def _walk_paragraphs(tree: HTMLParser) -> list[tuple[str, str]]:
-    """Yield (current-industry, paragraph-text) tuples by walking body order.
+    """Yield (current-industry, paragraph-text) tuples in document order.
 
-    Maintains 'current_industry' state by tracking H2/H3 headings.
+    Uses a single CSS selector spanning headings and content blocks; selectolax
+    returns hits in document order so we can maintain heading state by scan.
     """
-    body = tree.css_first("article") or tree.css_first("main") or tree.body
-    if body is None:
+    container = tree.css_first("article") or tree.body
+    if container is None:
         return []
+    nodes = container.css("h1, h2, h3, h4, p, li")
     out: list[tuple[str, str]] = []
     current_industry = ""
-    for node in _iter_descendants(body):
-        if node.tag in ("h1", "h2", "h3"):
+    for node in nodes:
+        if node.tag in ("h1", "h2", "h3", "h4"):
             t = node.text(separator=" ", strip=True)
             normalized = _norm_industry(t)
             if normalized:
                 current_industry = normalized
-        elif node.tag in ("p", "li"):
+        else:  # p or li
             txt = node.text(separator=" ", strip=True)
             if txt and len(txt) > 40:
                 out.append((current_industry, txt))
     return out
-
-
-def _iter_descendants(node: Node):
-    """Depth-first iteration including text nodes' parent elements."""
-    stack = list(node.iter())
-    while stack:
-        n = stack.pop(0)
-        yield n
 
 
 def _extract_company(paragraph: str) -> str | None:
