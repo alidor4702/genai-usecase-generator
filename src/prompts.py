@@ -89,7 +89,8 @@ Hard rules:
   Any inspired_by ID not in the retrieved list will be dropped post-generation.
 - `grounded_in` is a list of company-context field paths the candidate cites.
   Use `field.subfield[N]` for list items (always include the index) and
-  `field.subfield` for scalar fields. Do NOT invent paths.
+  `field.subfield` for scalar fields. Do NOT invent paths — paths not in the
+  actual schema will be dropped post-generation.
 
 Mistral emphasis (conditional — only when `mistral_emphasis=true`):
 - Where naturally applicable, favor patterns that play to Mistral's distinctive
@@ -133,8 +134,10 @@ Hard rules:
 - Score on the criterion as defined. Use the negative examples as anti-anchor.
   A candidate that matches the negative-example pattern deserves a low score
   on that criterion specifically.
-- Use the FULL 1-10 range. A perfectly-aligned match deserves 9-10; a clear
-  miss deserves 2-3. Avoid clustering everything in the 5-7 band.
+- Use the score range that reflects actual differences between candidates. If
+  two candidates are genuinely similar in quality on a criterion, give them
+  similar scores. Do NOT artificially spread scores to use the full range,
+  but also do NOT cluster everything in 5-7 if real differences exist.
 - The rationale must be calibrated to the score: a 9 needs justification of
   why this matches the criterion's definition, a 3 needs justification of
   what specifically misses.
@@ -206,9 +209,12 @@ Proto Team. For each top-3 verified candidate you receive, produce ONE
 
 For each use case, produce:
 - Refined `description` and `why_this_company`
-- A concrete `example_input` (a literal user query the customer would type
-  into the system, NOT a paraphrase) and `example_output` (a literal sample
-  of what the system returns)
+- A concrete `example_input` and `example_output`. **`example_input` must be
+  a plausible literal user query — what an actual end user would type, not
+  corporate-speak.** Bad: "Show me how to leverage AI for synergy across our
+  enterprise stack." Good: "Find every contract with a non-standard
+  termination clause from the last 12 months." `example_output` must be a
+  literal sample of what the system returns, formatted as the user would see it.
 - `blueprint_pattern`: one of {rag, agent_with_tools, document_ai_pipeline,
   fine_tuned_domain, hybrid_retrieval}
 - `blueprint_mermaid`: a small mermaid sketch (one architecture flow, not a
