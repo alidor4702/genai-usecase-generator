@@ -161,9 +161,117 @@ def _strip_fence(s: str) -> str:
     return s.strip()
 
 
+AGENT_TYPE_HEADERS = (
+    "Customer Agents",
+    "Employee Agents",
+    "Code Agents",
+    "Data Agents",
+    "Creative Agents",
+    "Security Agents",
+)
+
+
+def _chunk_by_agent_type(body: str) -> list[tuple[str | None, str]]:
+    """Return (agent_type, chunk_body) splits for a section's body.
+
+    Agent-type subheaders may appear mid-paragraph (no surrounding blank line),
+    so we substring-search for each header.
+    """
+    matches: list[tuple[int, str]] = []
+    for h in AGENT_TYPE_HEADERS:
+        idx = 0
+        while True:
+            i = body.find(h, idx)
+            if i == -1:
+                break
+            char_before = body[i - 1] if i > 0 else "\n"
+            after_idx = i + len(h)
+            char_after = body[after_idx] if after_idx < len(body) else "\n"
+            on_own_line = char_before == "\n" and char_after == "\n"
+            concat_ok = char_before in ".\n" and char_after == "\n"
+            if on_own_line or concat_ok:
+                matches.append((i, h))
+            idx = i + len(h)
+    matches.sort(key=lambda x: x[0])
+    if not matches:
+        return [(None, body)]
+    chunks: list[tuple[str | None, str]] = []
+    # Pre-amble (any text before first agent header)
+    if matches[0][0] > 0:
+        pre = body[: matches[0][0]].strip()
+        if pre:
+            chunks.append((None, pre))
+    for (start, label), nxt in zip(matches, matches[1:] + [(len(body), "<<END>>")], strict=False):
+        chunk_body = body[start + len(label) : nxt[0]].strip()
+        if chunk_body:
+            chunks.append((label, chunk_body))
+    return chunks
+
+
+async def _llm_extract_chunk(
+    client: Mistral,
+    sem: asyncio.Semaphore,
+    industry: str,
+    agent_hint: str | None,
+    body: str,
+) -> list[dict[str, object]]:
+    """Single LLM call to extract entries from one chunk."""
+    user_message = (
+        f"Industry: {industry}\n"
+        + (f"Agent type for this chunk: {agent_hint}\n" if agent_hint else "")
+        + f"\n=== SECTION CONTENT ===\n{body}\n=== END ==="
+    )
+    async with sem:
+        try:
+            r = await client.chat.complete_async(
+                model="mistral-medium-2604",
+                temperature=0.1,
+                max_tokens=24000,
+                timeout_ms=300_000,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+            )
+            text = r.choices[0].message.content
+            if isinstance(text, list):
+                text = "".join(getattr(b, "text", "") for b in text)
+            data = json.loads(_strip_fence(str(text or "")))
+            entries = data.get("entries", [])
+            if not isinstance(entries, list):
+                return []
+            return [e for e in entries if isinstance(e, dict) and e.get("company")]
+        except Exception as e:
+            logger.warning(
+                "LLM chunk extract failed for %s/%s: %s",
+                industry, agent_hint or "(no agent)", type(e).__name__,
+            )
+            return []
+
+
 async def _llm_extract_section(
     client: Mistral, sem: asyncio.Semaphore, section: IndustrySection
 ) -> list[dict[str, object]]:
+    # If the section is large, fall back to chunking by agent-type subheaders
+    OVERSIZED = 30_000
+    if len(section.body) > OVERSIZED:
+        chunks = _chunk_by_agent_type(section.body)
+        if len(chunks) > 1:
+            logger.info(
+                "1302 [%s]: oversized (%d chars), chunking into %d agent-type subsections",
+                section.industry, len(section.body), len(chunks),
+            )
+            results = await asyncio.gather(
+                *(_llm_extract_chunk(client, sem, section.industry, ah, body) for ah, body in chunks)
+            )
+            entries: list[dict[str, object]] = []
+            for r in results:
+                entries.extend(r)
+            logger.info("1302 [%s]: %d entries extracted (chunked)", section.industry, len(entries))
+            return entries
+
+    # Default single-call path for normal-sized sections
     user_message = (
         f"Industry: {section.industry}\n\n"
         f"=== SECTION CONTENT ===\n{section.body}\n=== END ==="
@@ -173,7 +281,11 @@ async def _llm_extract_section(
             r = await client.chat.complete_async(
                 model="mistral-medium-2604",
                 temperature=0.1,
-                max_tokens=8000,
+                # Generous ceiling — large sections produce many entries; truncation = bad JSON
+                max_tokens=24000,
+                # The default httpx timeout is too short for big outputs.
+                # 5 min covers worst-case Technology section.
+                timeout_ms=300_000,
                 response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
