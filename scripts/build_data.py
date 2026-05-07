@@ -27,6 +27,7 @@ import logging
 from scripts import (
     build_1302,
     build_blueprints,
+    build_depth_scores,
     build_embeddings,
     build_evidently,
     build_gcloud,
@@ -74,6 +75,7 @@ def main() -> None:
     p_wd = sub.add_parser("wikidata")
     p_wd.add_argument("--limit", type=int, default=100_000)
     sub.add_parser("embed")
+    sub.add_parser("depth")
     p_all = sub.add_parser("all")
     p_all.add_argument("--wikidata-limit", type=int, default=100_000)
 
@@ -97,6 +99,8 @@ def main() -> None:
             print(asyncio.run(build_wikidata.run(limit=args.limit)))
         case "embed":
             print(asyncio.run(build_embeddings.run()))
+        case "depth":
+            print(asyncio.run(build_depth_scores.run()))
         case "all":
             asyncio.run(cmd_all(wikidata_limit=args.wikidata_limit))
 

@@ -157,7 +157,7 @@ def _strip_fence(s: str) -> str:
     if s.startswith("```"):
         s = s.split("\n", 1)[1] if "\n" in s else s[3:]
         if s.endswith("```"):
-            s = s[: -3]
+            s = s[:-3]
     return s.strip()
 
 
@@ -245,7 +245,9 @@ async def _llm_extract_chunk(
         except Exception as e:
             logger.warning(
                 "LLM chunk extract failed for %s/%s: %s",
-                industry, agent_hint or "(no agent)", type(e).__name__,
+                industry,
+                agent_hint or "(no agent)",
+                type(e).__name__,
             )
             return []
 
@@ -260,10 +262,15 @@ async def _llm_extract_section(
         if len(chunks) > 1:
             logger.info(
                 "1302 [%s]: oversized (%d chars), chunking into %d agent-type subsections",
-                section.industry, len(section.body), len(chunks),
+                section.industry,
+                len(section.body),
+                len(chunks),
             )
             results = await asyncio.gather(
-                *(_llm_extract_chunk(client, sem, section.industry, ah, body) for ah, body in chunks)
+                *(
+                    _llm_extract_chunk(client, sem, section.industry, ah, body)
+                    for ah, body in chunks
+                )
             )
             entries: list[dict[str, object]] = []
             for r in results:
@@ -273,8 +280,7 @@ async def _llm_extract_section(
 
     # Default single-call path for normal-sized sections
     user_message = (
-        f"Industry: {section.industry}\n\n"
-        f"=== SECTION CONTENT ===\n{section.body}\n=== END ==="
+        f"Industry: {section.industry}\n\n=== SECTION CONTENT ===\n{section.body}\n=== END ==="
     )
     async with sem:
         try:
@@ -313,7 +319,6 @@ def _to_precedent(industry: str, entry: dict[str, object]) -> dict[str, object] 
         return None
     description = strip_vendor_terms(description_raw)
     title = description.split(".")[0][:200].strip()
-    agent_type = entry.get("agent_type")
     return {
         "id": make_id("google_cloud_1302", company, title),
         "company": company,

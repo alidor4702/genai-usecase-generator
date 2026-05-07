@@ -31,9 +31,7 @@ def is_skippable_url(url: str) -> bool:
     return any(d in u for d in NON_TEXT_DOMAINS) or u.endswith(".pdf")
 
 
-async def fetch_html(
-    client: httpx.AsyncClient, url: str, timeout_s: float = 10.0
-) -> str | None:
+async def fetch_html(client: httpx.AsyncClient, url: str, timeout_s: float = 10.0) -> str | None:
     if is_skippable_url(url):
         return None
     try:

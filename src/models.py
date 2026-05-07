@@ -277,7 +277,10 @@ class Precedent(BaseModel):
     outcome: str | None = None
     deep_content: str | None = None  # full article body where available
     source_url: str | None = None
-    source: Literal["evidently", "google_cloud_1001", "google_cloud_blueprints"] | None = None
+    source: (
+        Literal["evidently", "google_cloud_1001", "google_cloud_blueprints", "google_cloud_1302"]
+        | None
+    ) = None
     embedding: list[float] | None = None  # 1024-d mistral-embed; None until indexed
 
 
