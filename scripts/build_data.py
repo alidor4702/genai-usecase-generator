@@ -24,7 +24,14 @@ import argparse
 import asyncio
 import logging
 
-from scripts import build_embeddings, build_evidently, build_gcloud, build_wikidata
+from scripts import (
+    build_1302,
+    build_blueprints,
+    build_embeddings,
+    build_evidently,
+    build_gcloud,
+    build_wikidata,
+)
 from src.db import count_companies, count_precedents, ensure_schema
 
 
@@ -62,6 +69,8 @@ def main() -> None:
     sub.add_parser("status")
     sub.add_parser("evidently")
     sub.add_parser("gcloud")
+    sub.add_parser("blueprints")
+    sub.add_parser("genai-1302")
     p_wd = sub.add_parser("wikidata")
     p_wd.add_argument("--limit", type=int, default=100_000)
     sub.add_parser("embed")
@@ -80,6 +89,10 @@ def main() -> None:
             print(asyncio.run(build_evidently.run()))
         case "gcloud":
             print(asyncio.run(build_gcloud.run()))
+        case "blueprints":
+            print(asyncio.run(build_blueprints.run()))
+        case "genai-1302":
+            print(asyncio.run(build_1302.run()))
         case "wikidata":
             print(asyncio.run(build_wikidata.run(limit=args.limit)))
         case "embed":

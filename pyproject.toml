@@ -62,7 +62,10 @@ select = [
     "UP",  # pyupgrade
     "ASYNC", # async-specific lints
 ]
-ignore = ["E501"] # line length handled by formatter
+ignore = [
+    "E501",     # line length handled by formatter
+    "ASYNC240", # we accept brief blocking pathlib calls; simpler than introducing anyio.path
+]
 
 [tool.ruff.format]
 quote-style = "double"
