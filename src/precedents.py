@@ -124,10 +124,30 @@ async def load_index(force: bool = False) -> CorpusIndex:
 
 
 _INDUSTRY_STOPWORDS = {
-    "services", "service", "management", "industry", "industries",
-    "products", "solutions", "company", "companies", "platform", "platforms",
-    "technology", "tech", "business", "businesses", "global", "international",
-    "group", "groups", "holdings", "the", "and", "for", "with",
+    "services",
+    "service",
+    "management",
+    "industry",
+    "industries",
+    "products",
+    "solutions",
+    "company",
+    "companies",
+    "platform",
+    "platforms",
+    "technology",
+    "tech",
+    "business",
+    "businesses",
+    "global",
+    "international",
+    "group",
+    "groups",
+    "holdings",
+    "the",
+    "and",
+    "for",
+    "with",
 }
 
 

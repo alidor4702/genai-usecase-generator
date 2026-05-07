@@ -70,6 +70,18 @@ class BlueprintPattern(StrEnum):
     HYBRID_RETRIEVAL = "hybrid_retrieval"
 
 
+class Novelty(StrEnum):
+    """Whether a candidate is adapted from existing precedents or a novel direction.
+
+    Per the methodology, ≥3 of the 12 candidates MUST be `novel_direction` — not
+    direct adaptations of any single precedent. This field carries that meta-signal
+    in a structured way rather than embedded in the description text.
+    """
+
+    ADAPTED_FROM_PRECEDENT = "adapted_from_precedent"
+    NOVEL_DIRECTION = "novel_direction"
+
+
 # ----------------------------------------------------------------------------
 # Input / configuration
 # ----------------------------------------------------------------------------
@@ -304,6 +316,7 @@ class Candidate(BaseModel):
     why_this_company: str
     estimated_impact_summary: str
     suggested_mistral_products: list[str] = Field(default_factory=list)
+    novelty: Novelty = Novelty.ADAPTED_FROM_PRECEDENT
     inspired_by: list[str] = Field(default_factory=list)  # precedent IDs
     grounded_in: list[str] = Field(default_factory=list)  # company-context field paths
 

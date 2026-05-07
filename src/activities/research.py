@@ -68,7 +68,11 @@ Hard rules:
   initiative discovered. The downstream pipeline uses these as a hard gate
   against recommending what the company already does.
 - `meta.research_confidence` is a float in [0, 1] reflecting how coherently
-  the signals converge. Sparse / contradictory signals → low confidence.
+  the signals converge. Sparse / contradictory signals → lower confidence.
+- IF PARALLEL SIGNALS CONTRADICT EACH OTHER (e.g. Wikipedia says industry X
+  but recent news suggests pivot to Y, or jobs imply different tech maturity
+  than Wikipedia), include both in the relevant fields and lower confidence
+  accordingly. Do not silently pick one.
 - The verified-companies index is a confidence boost, never a gate.
 - `scale.size_tier` is one of: "startup", "scaleup", "enterprise", "unknown"
 - `scale.public_or_private` is one of: "public", "private", "unknown"

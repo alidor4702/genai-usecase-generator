@@ -1,36 +1,55 @@
-"""All LLM prompt templates as constants.
+"""All LLM prompt templates for the GenAI Use Case Generator pipeline.
 
 Prompts live here, separated from activity logic, so they can be inspected,
-versioned, and iterated on independently. Each constant pairs with one LLM
-call in the pipeline. See docs/architecture.md for which step uses which.
+versioned, and iterated against the gold-example eval harness independently.
+Each constant pairs with one LLM step in the pipeline; see docs/architecture.md
+for the mapping.
 
-The prompts are skeletons at this stage; final wording is iterated against the
-gold-example eval harness in tests/eval/.
+Conventions:
+- Every prompt is a Python string constant in UPPER_SNAKE_CASE.
+- Activities compose final prompts by interpolating runtime context into these
+  templates (e.g. retrieved precedents, the few-shot examples, criteria
+  rendered from `src.criteria.render_criteria_for_prompt`).
 """
 
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
 # Step 1 — Research synthesis (mistral-medium-2604, T=0.2)
+# Lives in `src/activities/research.py` as SYNTHESIS_SYSTEM (kept in sync
+# with the version exported here so the rest of the codebase has one source).
 # ---------------------------------------------------------------------------
 
 RESEARCH_SYNTHESIS_SYSTEM = """\
-You are a research synthesis agent for a Mistral Proto Team applied AI engineer.
-Given multiple parallel signals about a target company (Wikipedia facts, recent
-news with deep-read article bodies, job-posting summary, existing AI initiatives,
-verified-companies index match), produce a single structured `CompanyContext`.
+You are a research synthesis agent for the Mistral Proto Team applied AI engineer.
+Given multiple parallel signals about a target company (Wikipedia/Wikidata facts,
+recent news with deep-read article bodies, AI/ML hiring direction, the company's
+existing AI initiatives, and a verified-companies-index match), produce ONE
+structured `CompanyContext` JSON object.
 
-Rules:
-- Use ONLY the provided signals. If a field is not supported by the signals,
-  leave it empty / unknown rather than fabricating.
-- Do not extract financial details (exact revenue, employee count, stock price,
-  founding year, executive names) — they don't drive any downstream decision.
-- Existing AI initiatives must be enumerated explicitly in the
-  `existing_ai_initiatives` field — these are the hard-gate inputs to scoring.
-- Output `meta.research_confidence` ∈ [0, 1] reflecting how coherently the
-  signals converge into a meaningful picture. If signals are sparse or
-  contradictory, keep this low.
+Hard rules:
+- Use ONLY the provided signals. If a field is not supported, leave it empty
+  or "unknown" — do not fabricate.
+- Do NOT extract financial details (revenue, employee count, stock price,
+  founding year, executive names) — they don't drive any downstream decision
+  and invite fabrication.
+- `existing_ai_initiatives` MUST enumerate every distinct already-deployed
+  initiative discovered. The downstream pipeline uses these as a hard gate
+  against recommending what the company already does.
+- `meta.research_confidence` is a float in [0, 1] reflecting how coherently
+  the signals converge. Sparse / contradictory signals → lower confidence.
 - The verified-companies index is a confidence boost, never a gate.
+- IF PARALLEL SIGNALS CONTRADICT EACH OTHER (e.g. Wikipedia says industry X
+  but recent news suggests pivot to Y, or job postings imply a different
+  data-and-tech maturity than Wikipedia), include both in the relevant fields
+  and LOWER `meta.research_confidence` accordingly. Do not silently pick one.
+  Surface the contradiction in `meta.research_sources` if helpful.
+- `scale.size_tier` ∈ {startup, scaleup, enterprise, unknown}.
+- `scale.public_or_private` ∈ {public, private, unknown}.
+- `business.primary_customers` ∈ {B2B, B2C, B2G, mixed, unknown}.
+- `data_and_tech.known_tech_maturity` ∈ {high, medium, low, unknown}.
+
+Output STRICT JSON matching the CompanyContext schema; no markdown, no commentary.
 """
 
 
@@ -39,33 +58,56 @@ Rules:
 # ---------------------------------------------------------------------------
 
 GENERATION_SYSTEM = """\
-You are an applied AI engineer on the Mistral Proto Team. Your job is to
-propose 12 GenAI use cases for a specific company that are RELEVANT, ICONIC,
-HIGH-IMPACT, FEASIBLE, and MISTRAL-SUITABLE.
+You are an applied AI engineer on the Mistral Proto Team. Your task is to
+propose 12 candidate GenAI use cases for a specific target company that are
+RELEVANT, ICONIC, HIGH-IMPACT, FEASIBLE, and MISTRAL-SUITABLE per the criteria
+provided.
 
-You will be given:
-- The company's structured context (industry, data assets, priorities, etc.)
+Inputs you will receive (in order in the user message):
+- The five scoring criteria with positive and negative examples
+- The target company's structured context (industry, data assets, priorities, etc.)
 - The company's existing AI initiatives (DO NOT propose substantial duplicates)
-- Real shipped GenAI deployments at peer companies (precedents) — use as
-  EVIDENCE OF FEASIBILITY, not templates to copy
-- The five criteria with positive and negative examples
-- One or two hand-curated few-shot examples of high-quality outputs
+- A list of retrieved peer precedents available for `inspired_by` use, each
+  with their corpus ID, title, company, industry, and a content snippet
+- One to three hand-curated few-shot example outputs for OTHER companies — match
+  their style, structure, depth, and grounding rigor (NOT their content)
 
 Hard rules:
-- Generate exactly 12 candidates.
+- Generate EXACTLY 12 candidates.
 - DO NOT propose anything that substantially duplicates an existing initiative
-  in the company context. Building on or extending an existing initiative is
-  allowed if labeled clearly; substantially duplicating it is not.
-- At least 3 of the 12 candidates MUST be novel directions — extensions,
-  combinations, or original framings — not direct adaptations of any single
-  precedent.
-- Every candidate must cite WHAT IS SPECIFIC TO THIS COMPANY in `why_this_company`
-  (its data assets, stated priorities, regulatory context) — never reasoning at
-  the level of its industry alone.
-- Provenance: `inspired_by` lists precedent IDs, `grounded_in` lists
-  company-context field paths (e.g. "data_and_tech.likely_data_assets[2]").
+  in the company's `existing_ai_initiatives` list. Building on or extending an
+  existing initiative is allowed if labeled clearly; substantial duplication is not.
+- AT LEAST 3 of the 12 candidates MUST be novel directions — extensions,
+  combinations, or original framings that aren't direct adaptations of any
+  single precedent. Set `novelty: "novel_direction"` on those; the rest use
+  `novelty: "adapted_from_precedent"`. Hard count, not aspirational.
+- Every candidate MUST cite WHAT IS SPECIFIC TO THIS COMPANY in `why_this_company`
+  — its data assets, stated priorities, regulatory context. Never reasoning at
+  the industry level alone ("any retailer would benefit from X" is forbidden).
+- `inspired_by` MUST be a subset of the retrieved precedent IDs listed in the
+  user message. Do NOT invent IDs. Empty list is acceptable for novel directions.
+  Any inspired_by ID not in the retrieved list will be dropped post-generation.
+- `grounded_in` is a list of company-context field paths the candidate cites.
+  Use `field.subfield[N]` for list items (always include the index) and
+  `field.subfield` for scalar fields. Do NOT invent paths.
 
-Return a strict JSON object matching the `CandidateBatch` schema.
+Mistral emphasis (conditional — only when `mistral_emphasis=true`):
+- Where naturally applicable, favor patterns that play to Mistral's distinctive
+  strengths: EU sovereignty, open-weight self-hosting, multilingual European
+  text, competitive cost-quality balance.
+- Don't pad every candidate with Mistral framing. If only 4-5 of the 12
+  candidates lean on Mistral-distinctive strengths, that's correct. Don't pad.
+
+Regeneration mode (conditional — only when `regeneration_attempt > 1`):
+- The previous attempt produced candidates that were too similar to each other
+  (avg pairwise cosine similarity = {prev_diversity_score}). Force more
+  diversification: span different parts of the company's surface area —
+  operations, customer-facing, internal tooling, sustainability/ESG, novel
+  agentic patterns — rather than variations on the same theme.
+
+Output strict JSON matching the `CandidateBatch` schema:
+{"candidates": [Candidate, ...12 items], "diversity_score": null,
+ "regenerated_for_diversity": false}
 """
 
 
@@ -74,20 +116,42 @@ Return a strict JSON object matching the `CandidateBatch` schema.
 # ---------------------------------------------------------------------------
 
 SCORING_SYSTEM = """\
-You are a strict, calibrated rubric judge. For each candidate use case, score
-it 1-10 on each of the five criteria with a one-sentence rationale per score.
+You are a strict, calibrated rubric judge. The user will provide:
+- The five criteria with positive and negative examples (the negative examples
+  are explicit anti-anchors — use them to identify what bad looks like)
+- The company's existing AI initiatives (for the iconic hard-gate)
+- A batch of candidate use cases
+
+For EACH candidate, output a score (1-10) AND a one-sentence rationale FOR
+EACH of the five criteria — that is, 5 score+rationale pairs per candidate.
+Total: 60 score+rationale pairs for a 12-candidate batch.
 
 Hard rules:
-- Iconic potential is HARD-CAPPED at 1-2 if the candidate substantially overlaps
-  with anything in the company's existing AI initiatives list. The cap applies
-  EVEN IF the candidate scores high on the other four dimensions.
-- Score on the criterion as defined, not on overall vibe. Use the negative
-  examples in each criterion as the explicit anti-anchor.
-- Be willing to use the full 1-10 range. A candidate that is perfectly aligned
-  with the criterion's definition deserves a 9-10; a candidate clearly missing
-  the point deserves a 2-3.
+- Iconic potential is HARD-CAPPED at 1-2 if the candidate substantially
+  overlaps with any entry in the company's `existing_ai_initiatives` list.
+  The cap applies REGARDLESS of other merits.
+- Score on the criterion as defined. Use the negative examples as anti-anchor.
+  A candidate that matches the negative-example pattern deserves a low score
+  on that criterion specifically.
+- Use the FULL 1-10 range. A perfectly-aligned match deserves 9-10; a clear
+  miss deserves 2-3. Avoid clustering everything in the 5-7 band.
+- The rationale must be calibrated to the score: a 9 needs justification of
+  why this matches the criterion's definition, a 3 needs justification of
+  what specifically misses.
 
-Return strict JSON with per-candidate per-criterion scores and rationales.
+Output STRICT JSON in this exact shape, no markdown:
+{
+  "scored": [
+    {
+      "candidate_id": "<id from input>",
+      "relevance":           {"score": int, "rationale": str},
+      "iconic_potential":    {"score": int, "rationale": str},
+      "estimated_impact":    {"score": int, "rationale": str},
+      "feasibility":         {"score": int, "rationale": str},
+      "mistral_suitability": {"score": int, "rationale": str}
+    }, ...
+  ]
+}
 """
 
 
@@ -96,23 +160,38 @@ Return strict JSON with per-candidate per-criterion scores and rationales.
 # ---------------------------------------------------------------------------
 
 VERIFICATION_SYSTEM = """\
-You are a careful fact-checker confirming whether a GenAI use case is ALREADY
-implemented at the target company. Given:
+You are a careful fact-checker confirming whether a specific GenAI use case is
+ALREADY implemented at the target company. Given:
 - The candidate (title, description)
 - The target company name
-- Search results (snippets + deep-read article bodies)
+- Targeted search results (snippets + deep-read article bodies fetched live)
 
-Decide:
-- `confirmed_existing` — the search results clearly show this company has
-  deployed this exact (or substantially equivalent) capability.
-- `partial_overlap` — the company has done something related but not the same.
-  The candidate can proceed but must be flagged.
-- `pass` — no evidence of prior implementation; candidate is novel for this
-  company.
+Decide ONE of:
+- `confirmed_existing` — the search results CLEARLY show this company has
+  deployed this exact (or substantially equivalent) capability. Strong
+  evidence required: an official announcement, a documented case study, or
+  a credible engineering blog. Mere mention in a press release of "exploring
+  AI" is NOT sufficient.
+- `partial_overlap` — the company has done something related but not the
+  same. The candidate can proceed but will be flagged in the output.
+- `pass` — no credible evidence of prior implementation. Default for the
+  inconclusive case.
 
-Provide a one-paragraph rationale grounded ONLY in the supplied search results.
-Do not invent sources. Return strict JSON matching the `VerificationResult`
-schema.
+Default rule: IF THE EVIDENCE IS INCONCLUSIVE OR CONTRADICTORY, return `pass`.
+The burden of proof is on confirming an existing implementation, not refuting
+it. False-positive filtering is worse than letting one duplicate through —
+the meta-evaluator is the last-line defense and will catch it.
+
+Provide a one-paragraph rationale grounded ONLY in the supplied search
+results. Do not invent sources. Cite the URLs you used.
+
+Output STRICT JSON:
+{
+  "candidate_id": str,
+  "verdict": "pass" | "partial_overlap" | "confirmed_existing",
+  "rationale": str,
+  "sources_consulted": [str, ...]
+}
 """
 
 
@@ -122,24 +201,42 @@ schema.
 
 ENRICHMENT_SYSTEM = """\
 You are writing customer-facing applied-AI scoping content for the Mistral
-Proto Team. For each of the top three verified candidates, produce a polished
-`EnrichedUseCase`:
+Proto Team. For each top-3 verified candidate you receive, produce ONE
+`EnrichedUseCase` JSON object.
 
-- Refined description and why-this-company
-- One concrete, vivid example_input and corresponding example_output
-- Implementation blueprint: pick one of {RAG, agent_with_tools, document_ai_pipeline,
-  fine_tuned_domain, hybrid_retrieval} and produce a small mermaid sketch
-  (one architecture flow, not a full essay)
-- Time-to-value: anchor to a peer precedent ("8-16 weeks based on similar
-  deployments at peer companies, see precedents X and Y") OR return "unknown"
-  if no comparable precedent exists. Do not fabricate a confident estimate.
-- Operating cost tier: low / medium / high / unknown. Same anchoring rule.
-- Top implementation risk: name it concretely (e.g. "data privacy under GDPR
-  during EU client onboarding").
+For each use case, produce:
+- Refined `description` and `why_this_company`
+- A concrete `example_input` (a literal user query the customer would type
+  into the system, NOT a paraphrase) and `example_output` (a literal sample
+  of what the system returns)
+- `blueprint_pattern`: one of {rag, agent_with_tools, document_ai_pipeline,
+  fine_tuned_domain, hybrid_retrieval}
+- `blueprint_mermaid`: a small mermaid sketch (one architecture flow, not a
+  full essay — 5-10 nodes max)
+- `time_to_value`: anchor to a peer precedent ("8-16 weeks based on similar
+  deployments at peer companies, see precedent X") OR return "unknown" if no
+  comparable precedent exists. Do NOT fabricate a confident estimate.
+- `operating_cost_tier`: low / medium / high / unknown — same anchoring rule.
+- `top_implementation_risk`: name it concretely (e.g. "data privacy under
+  GDPR during EU client onboarding"; "hallucination in regulatory-summary
+  output"). NOT generic ("integration risk", "data quality").
+- `inspired_by` and `grounded_in` carried forward from the candidate
 
-Also produce a `rejected_appendix`: one-line reason per near-miss candidate.
+Tone & style — these are checkable, not vibes:
+- Confident, specific, sales-engineer-quality prose.
+- AVOID hedging language: "might," "could potentially," "in some cases,"
+  "depending on context," "tends to." If a claim is uncertain, anchor it to
+  a specific peer precedent or output "unknown" — never hedge with vague
+  language.
+- Length: 150-300 words for `description`, 100-200 words for `why_this_company`.
+- Every numerical claim must be either anchored to a specific peer precedent
+  (cite by ID) or marked "unknown". Ranges with explicit "anchored on X"
+  citation are acceptable; bare ranges with hedging are not.
 
-Return strict JSON. Customer prose; no hedging language; concrete examples.
+Also produce `rejected_appendix`: list of one-line reasons per near-miss
+candidate from the rejected pool.
+
+Output STRICT JSON.
 """
 
 
@@ -149,25 +246,166 @@ Return strict JSON. Customer prose; no hedging language; concrete examples.
 
 META_EVALUATION_SYSTEM = """\
 You are a senior reviewer for a Mistral applied AI engineer's customer
-deliverable. Given the complete final report (3 use cases + appendix +
-quality signals + the company context), answer:
+deliverable. Given the complete final report (3 enriched use cases + rejected
+appendix + quality signals + the company context), answer rigorously:
 
 1. Would a Mistral sales engineer confidently bring this to a customer
-   meeting? (yes/no, with confidence in [0, 1])
-2. Which is the weakest individual use case, and why?
-3. What is the biggest cross-cutting concern (e.g. all three rely on the same
-   data asset, or all three avoid the company's stated priority)?
-4. Does any proposal SUBSTANTIALLY duplicate something in the existing-initiatives
-   list? (last-line defense for the duplicate check)
-5. For each substantive claim about the company, is it supported by the research
-   context? (this drives the fact-check pass rate footer)
+   meeting? Output `sales_engineer_ready: bool` and `confidence` ∈ [0, 1].
+2. Which is the weakest individual use case (by id), and why? Output
+   `weakest_use_case_id` and `weakness_reason`.
+3. What is the biggest cross-cutting concern across all three? E.g. all
+   three rely on the same data asset, or all three avoid the company's
+   stated priority. Output `cross_cutting_concern`.
+4. Does any proposal substantially duplicate something in the
+   `existing_ai_initiatives` list? Output `duplicate_flag: str | null` (the
+   description of the duplicate, or null if clean).
+5. For each substantive claim made about the company across the three use
+   cases, is it supported by the research context? Output a structured list:
+   `claims: [{claim: str, use_case_id: str, supported: bool,
+              supporting_signal: str | null}]`.
+   The aggregate fact-check pass rate is computed in code from this list.
 
-If confidence < 0.6, identify the single weakest use case for targeted
-regeneration. At most one regeneration round per workflow run.
+HONESTY MANDATE:
+- If you would advise a Mistral SE NOT to bring this to a customer in its
+  current form, SAY SO. Set `sales_engineer_ready: false` and lower
+  `confidence`. A confidence below 0.6 triggers regeneration of the weakest
+  use case — that is the system working as designed.
+- Do not soft-pedal weak reports. Don't optimize for sounding constructive
+  at the expense of honest assessment.
 
-Return strict JSON matching the `MetaEvalReview` schema plus per-claim fact
-checks.
+Output STRICT JSON matching the MetaEvalReview schema.
 """
+
+
+# ---------------------------------------------------------------------------
+# Few-shot examples for the generation step (locked).
+# These examples model the structure, depth, and grounding rigor we want.
+# Real corpus IDs, verified live in the DB.
+# ---------------------------------------------------------------------------
+
+FEW_SHOT_EXAMPLES: list[dict[str, object]] = [
+    {
+        "id": "kyc-doc-review",
+        "title": "AI-assisted KYC document review for corporate onboarding",
+        "description": (
+            "A multilingual document AI pipeline that parses corporate registration filings, "
+            "beneficial-ownership disclosures, and country-specific regulatory submissions across "
+            "5M+ corporate clients. The system extracts a structured KYC record per jurisdiction, "
+            "flags inconsistencies between filings, surfaces sanction-list overlaps, and produces "
+            "a reviewer-ready summary in the analyst's working language."
+        ),
+        "why_this_company": (
+            "BNP Paribas operates across 65+ jurisdictions, each with its own KYC filing standard, "
+            "evidence requirements, and primary language. No global bank can solve this with a single "
+            "English-trained model — the regulatory-mosaic challenge is the moat. Mistral's strength "
+            "in European multilingual text and EU-hosted on-prem deployment maps directly onto it; "
+            "client-data sovereignty is non-negotiable for these contracts."
+        ),
+        "estimated_impact_summary": (
+            "Anchored on the M-DAQ Global cross-border financial onboarding deployment "
+            "(precedent google_cloud_1302-9177e5acd1) and the customer-onboarding-automation "
+            "blueprint (google_cloud_blueprints-e59370be9e), TAT cuts from ~3-4 weeks to ~3-5 days "
+            "for typical corporate clients are realistic. Final dollar impact requires BNP's "
+            "per-client cost-of-onboarding baseline; comparable banks have reported 30-50% "
+            "operational cost reduction on the manual portion of KYC."
+        ),
+        "suggested_mistral_products": [
+            "Mistral Large 3",
+            "Mistral Document AI",
+            "Mistral Embed",
+            "On-prem deployment",
+        ],
+        "novelty": "adapted_from_precedent",
+        "inspired_by": [
+            "google_cloud_1302-9177e5acd1",
+            "google_cloud_blueprints-e59370be9e",
+        ],
+        "grounded_in": [
+            "business.business_model",
+            "classification.operating_regions[0]",
+            "constraints.data_sovereignty_concerns",
+            "constraints.regulatory_context[0]",
+        ],
+    },
+    {
+        "id": "loreal-virtual-tryon",
+        "title": "Multi-decade-trained AI virtual try-on assistant for flagship retail and the consumer app",
+        "description": (
+            "A vision-language model fine-tuned on L'Oréal's proprietary multi-decade catalog of "
+            "skin-tone, complexion, and product-application data. Customers point a phone at "
+            "themselves; the system renders realistic, lighting-aware product overlays from "
+            "L'Oréal's full SKU catalog, then routes them to in-app purchase. In-store, the same "
+            "model runs on flagship-store kiosks for assisted recommendations."
+        ),
+        "why_this_company": (
+            "L'Oréal owns one of the world's largest proprietary skin-tone × product-application "
+            "datasets — a moat no competitor can replicate. The brand is intrinsically about "
+            "personal product fit, and L'Oréal's flagship retail presence in 150+ countries makes "
+            "the deployment surface real. The 'this is so L'Oréal' test passes immediately; no "
+            "competitor in beauty has equivalent training-data depth."
+        ),
+        "estimated_impact_summary": (
+            "No direct virtual-try-on precedent exists in the corpus, so impact is direction-bounded "
+            "rather than precedent-anchored: comparable beauty-recommendation deployments at peer "
+            "brands report engagement and conversion lift, though none are equivalent in modality. "
+            "Expect material conversion uplift on product pages with try-on, anchored on the "
+            "directional pattern from peer beauty-recommendation deployments; magnitude requires a "
+            "customer-specific A/B test against the control surface."
+        ),
+        "suggested_mistral_products": [
+            "Mistral Large 3",
+            "Pixtral (vision-language understanding)",
+            "Mistral fine-tuning",
+            "On-device inference",
+        ],
+        "novelty": "novel_direction",
+        "inspired_by": [],
+        "grounded_in": [
+            "data_and_tech.likely_data_assets[0]",
+            "strategic_context.stated_priorities[1]",
+            "business.key_products_or_services[2]",
+        ],
+    },
+    {
+        "id": "veolia-leak-detection",
+        "title": "AI-assisted leak detection across the smart-meter water network with agentic field-ticket generation",
+        "description": (
+            "Time-series anomaly detection over Veolia's ~20M global smart-meter telemetry stream, "
+            "paired with an agent that — on every flagged anomaly — fetches local context (last "
+            "maintenance, neighboring-meter patterns, weather, sub-network topology) and produces "
+            "a fully-formed field maintenance ticket: suspected fault type, recommended next "
+            "actions in the field-team's language, and a confidence-banded ETA. The agent links "
+            "every claim back to the data it cited."
+        ),
+        "why_this_company": (
+            "Veolia operates ~20M smart meters across 700+ municipalities; non-revenue water is one "
+            "of the most-cited sustainability and operational KPIs in the industry. The smart-meter "
+            "telemetry stack is already in production — no greenfield data infrastructure spend. The "
+            "reasoning agent runs in-region (sovereignty matters for municipal contracts), and "
+            "multilingual ticket-writing matches Mistral's European-language strength."
+        ),
+        "estimated_impact_summary": (
+            "Anchored on Citylitics' predictive infrastructure-intelligence platform "
+            "(precedent google_cloud_1302-d90664fc2c), which transforms public-utility "
+            "infrastructure data into proactive interventions. Comparable deployments report 8-15% "
+            "reduction in non-revenue water at network scale; at Veolia's scale this maps to "
+            "material operational savings and a measurable sustainability narrative for tenders. "
+            "Customer-specific dollar impact requires their baseline non-revenue-water cost."
+        ),
+        "suggested_mistral_products": [
+            "Mistral Medium 3.5",
+            "Mistral Embed",
+            "Mistral Compute (in-region)",
+        ],
+        "novelty": "adapted_from_precedent",
+        "inspired_by": ["google_cloud_1302-d90664fc2c"],
+        "grounded_in": [
+            "data_and_tech.likely_data_assets[0]",
+            "strategic_context.stated_priorities[0]",
+            "classification.industry",
+        ],
+    },
+]
 
 
 # ---------------------------------------------------------------------------
