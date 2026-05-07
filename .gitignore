@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / Next
+node_modules/
+.next/
+.turbo/
+out/
+dist/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Data — generated artifacts
+data/genai_usecases.db
+data/genai_usecases.db-journal
+data/cache/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project conventions doc — internal, not for reviewers
+CLAUDE.md
+
+# Logs
+*.log
