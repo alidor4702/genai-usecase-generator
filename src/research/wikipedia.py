@@ -70,23 +70,33 @@ async def _fetch_summary_and_qid(
     return None, None
 
 
-async def _fetch_wikidata_facts(
+async def _fetch_wikidata_country(
     client: httpx.AsyncClient, qid: str
-) -> tuple[str | None, str | None]:
-    """Return (industry_label, country_label) for a Wikidata entity."""
+) -> str | None:
+    """Return country label only for a Wikidata entity.
+
+    P452 (industry) used to be fetched here too but it returns statistical-
+    classification codes ("other monetary intermediations", "combined
+    administrative office services") that are useless for customer-facing
+    output. Industry is now derived from the Wikipedia summary via
+    src/research/industry_label.py instead — one LLM call over the curated
+    intro prose beats a Q-id round-trip every time.
+
+    Country is unaffected: P17's Q-id labels are clean ("France", "United
+    States") and stable. Keeping it.
+    """
     try:
         r = await client.get(WIKIDATA_ENTITY.format(qid=qid), timeout=15.0)
         r.raise_for_status()
         data = r.json()
     except httpx.HTTPError:
-        return None, None
+        return None
     entity = data.get("entities", {}).get(qid, {})
     claims = entity.get("claims", {})
-    industry_qid = _first_claim_qid(claims.get("P452", []))
     country_qid = _first_claim_qid(claims.get("P17", []))
-    industry_label = await _resolve_qid_label(client, industry_qid) if industry_qid else None
-    country_label = await _resolve_qid_label(client, country_qid) if country_qid else None
-    return industry_label, country_label
+    if country_qid is None:
+        return None
+    return await _resolve_qid_label(client, country_qid)
 
 
 def _first_claim_qid(claims: list[dict[str, object]]) -> str | None:
@@ -129,13 +139,11 @@ async def fetch_wikipedia_facts(company_name: str) -> WikipediaFacts:
                 facts = WikipediaFacts(found=False)
             else:
                 summary, qid = await _fetch_summary_and_qid(client, title)
-                industry, country = (None, None)
-                if qid:
-                    industry, country = await _fetch_wikidata_facts(client, qid)
+                country = await _fetch_wikidata_country(client, qid) if qid else None
                 facts = WikipediaFacts(
                     found=True,
                     summary=summary,
-                    industry=industry,
+                    industry=None,  # derived later by industry_label.py from summary
                     geography=country,
                     business_model=None,
                     founded_context=None,
