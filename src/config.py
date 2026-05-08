@@ -6,10 +6,29 @@ validated at boot. See CLAUDE.md ("Configuration via Pydantic Settings").
 
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Tier(StrEnum):
+    """Performance vs depth trade-off, set per-run via the CLI flag.
+
+    fast      — skip polish/attribution/regen, no web_search tool, mistral-medium
+                for enrichment. Wall time ~60-90s.
+    standard  — full pipeline minus the heaviest knobs: web_search budget 2,
+                regen only if confidence < threshold, polish+attribution always.
+                Wall time ~2-3 minutes (default).
+    max       — current full pipeline: web_search budget 4, mistral-large for
+                enrichment, layer-2 fallback always, long max_tokens. Wall time
+                ~5-7 minutes.
+    """
+
+    FAST = "fast"
+    STANDARD = "standard"
+    MAX = "max"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -84,6 +103,10 @@ class Settings(BaseSettings):
     # ---- Lightpanda CDP fallback ------------------------------------------
 
     lightpanda_cdp_url: str | None = None  # e.g. "ws://localhost:9222" if running
+
+    # ---- Performance tier --------------------------------------------------
+
+    tier: Tier = Tier.STANDARD
 
 
 # Module-level singleton, loaded once at process start.
