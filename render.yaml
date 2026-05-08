@@ -1,0 +1,32 @@
+# Render Blueprint — declarative deploy config for the FastAPI backend.
+#
+# Usage: in Render's UI, click "New" → "Blueprint", point it at this repo.
+# Render reads this file, provisions the service, and sets up auto-deploy
+# on every push to main.
+#
+# The standalone Next.js app deploys separately on Vercel (see standalone/
+# README) since Vercel's Next.js detection is best-in-class.
+
+services:
+  - type: web
+    name: genai-usecase-generator-api
+    runtime: python
+    plan: free
+    region: frankfurt        # closer to Mistral's EU infra
+    branch: main
+    rootDir: .
+    buildCommand: pip install uv && uv sync --frozen
+    startCommand: >
+      uv run uvicorn src.api:app
+      --host 0.0.0.0 --port $PORT
+      --proxy-headers --forwarded-allow-ips '*'
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12
+      - key: MISTRAL_API_KEY
+        sync: false          # set in Render dashboard, not committed
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: TIER
+        value: standard

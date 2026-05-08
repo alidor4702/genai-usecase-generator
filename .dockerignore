@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+node_modules
+.next
+docs/examples/v1
+docs/examples/v2
+docs/examples/v3
+data/raw/*.csv.bak
+.DS_Store
