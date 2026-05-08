@@ -19,6 +19,7 @@ from mistralai.client import Mistral
 from src.config import settings
 from src.models import CompanyContext, RetrievedPrecedents
 from src.precedents import retrieve_top_k
+from src.trace import trace_step
 
 logger = logging.getLogger(__name__)
 
@@ -47,23 +48,40 @@ async def retrieve_precedents_activity(
         raise RuntimeError("MISTRAL_API_KEY required for retrieval embedding")
     client = Mistral(api_key=settings.mistral_api_key)
     query_text = _company_query_text(ctx)
-    resp = await client.embeddings.create_async(
-        model=settings.mistral_embedding_model,
-        inputs=[query_text],
-    )
-    query_embedding = list(resp.data[0].embedding)
+    async with trace_step(
+        "retrieve",
+        settings.mistral_embedding_model,
+        "embeddings.create",
+        inputs_summary=f"company_query | industries={ctx.classification.industry!r}",
+    ) as ev:
+        resp = await client.embeddings.create_async(
+            model=settings.mistral_embedding_model,
+            inputs=[query_text],
+        )
+        query_embedding = list(resp.data[0].embedding)
+        ev.outputs_summary = f"embedded {len(query_embedding)}-dim query vector"
 
     industries: list[str] = [ctx.classification.industry] + list(
         ctx.classification.sub_industries or []
     )
-    out = await retrieve_top_k(
-        query_embedding,
-        k=k,
-        target_company=ctx.identity.name,
-        company_industries=industries,
-        min_depth=min_depth,
-        use_mmr=True,
-    )
+    async with trace_step(
+        "retrieve",
+        "precedent_corpus",
+        "cosine_topk",
+        inputs_summary=f"k={k} min_depth={min_depth} target={ctx.identity.name!r}",
+    ) as ev:
+        out = await retrieve_top_k(
+            query_embedding,
+            k=k,
+            target_company=ctx.identity.name,
+            company_industries=industries,
+            min_depth=min_depth,
+            use_mmr=True,
+        )
+        ev.outputs_summary = (
+            f"retrieved {len(out.items)} | mmr={out.used_mmr} | "
+            f"top_sim={max(out.similarity_scores) if out.similarity_scores else 0:.3f}"
+        )
     logger.info(
         "retrieve: returned %d precedents (mmr=%s, top sim=%.3f)",
         len(out.items),
