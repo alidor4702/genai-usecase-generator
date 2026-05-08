@@ -33,19 +33,21 @@ from src.activities.research import (
 )
 from src.activities.retrieve import retrieve_precedents_activity
 from src.activities.score import score_candidates_activity
-from src.activities.select_enrich import select_and_enrich_activity
+from src.activities.select_enrich import (
+    regen_one_use_case_activity,
+    select_and_enrich_activity,
+)
 from src.activities.verify_per_candidate import verify_top_candidates_activity
-from src.config import settings
+from src.config import Tier, settings
 from src.models import (
     CriteriaWeights,
     FocusArea,
+    RejectedCandidate,
     Report,
     ResearchDepth,
-    VerificationBatch,
-    VerificationResult,
-    VerificationVerdict,
     WorkflowInput,
 )
+from src.trace import start_run_trace
 from src.ui.render import render_report_to_markdown
 
 logger = logging.getLogger(__name__)
@@ -75,24 +77,32 @@ def _parse_weights(s: str | None) -> CriteriaWeights:
 async def run_pipeline(params: WorkflowInput, write_md: Path | None) -> int:
     log = logging.getLogger("run_example")
 
+    # Initialize the per-run pipeline action trace. Activities will record
+    # events into it via the ContextVar; we render it to a `_trace.md` file
+    # next to the report so users can inspect the agent flow + timings.
+    trace = start_run_trace(params.company_name)
+    log.info("trace: started for %s at %s", params.company_name, trace.started_at.isoformat())
+
     log.info("=== Step 1: Research ===")
-    ctx = await research_company_activity(params.company_name, params.research_depth)
+    ctx, ledger = await research_company_activity(params.company_name, params.research_depth)
     log.info(
-        "research_confidence=%.2f | is_verified=%s | industry=%s | sources=%s",
+        "research_confidence=%.2f | is_verified=%s | industry=%s | sources=%s | ledger=%d",
         ctx.meta.research_confidence,
         ctx.meta.is_verified,
         ctx.classification.industry,
         ctx.meta.research_sources,
+        len(ledger.entries),
     )
 
     log.info("=== Step 1b: Context completion (gap-fill) ===")
-    ctx = await enrich_company_context_activity(ctx)
+    ctx, ledger = await enrich_company_context_activity(ctx, ledger)
     log.info(
-        "after enrich: confidence=%.2f | industry=%s | priorities=%d | data_assets=%d",
+        "after enrich: confidence=%.2f | industry=%s | priorities=%d | data_assets=%d | ledger=%d",
         ctx.meta.research_confidence,
         ctx.classification.industry,
         len(ctx.strategic_context.stated_priorities),
         len(ctx.data_and_tech.likely_data_assets),
+        len(ledger.entries),
     )
 
     confidence_ok = (
@@ -111,14 +121,15 @@ async def run_pipeline(params: WorkflowInput, write_md: Path | None) -> int:
 
     log.info("=== Step 3: Generate 12 candidates ===")
     bundle = await gather_bundle_for_company(params.company_name, params.research_depth)
-    batch = await generate_candidates_activity(
-        ctx, retrieved, params.focus_area.value, True, raw_bundle=bundle
+    batch, ledger = await generate_candidates_activity(
+        ctx, retrieved, params.focus_area.value, True, raw_bundle=bundle, ledger=ledger
     )
     log.info(
-        "generated %d candidates | diversity=%.3f | regenerated=%s",
+        "generated %d candidates | diversity=%.3f | regenerated=%s | ledger=%d",
         len(batch.candidates),
         batch.diversity_score,
         batch.regenerated_for_diversity,
+        len(ledger.entries),
     )
 
     log.info("=== Step 4: Score (self-consistency, 2 passes) ===")
@@ -127,15 +138,25 @@ async def run_pipeline(params: WorkflowInput, write_md: Path | None) -> int:
 
     log.info("=== Step 5: Per-candidate verification of top-3 ===")
     top_3 = scored.scored[:3]
-    verified = await verify_top_candidates_activity(top_3, ctx, params.company_name)
-    log.info("verdicts: %s", [(r.candidate_id, r.verdict.value) for r in verified.results])
+    verified, ledger = await verify_top_candidates_activity(
+        top_3, ctx, params.company_name, ledger=ledger
+    )
+    log.info(
+        "verdicts: %s | ledger=%d",
+        [(r.candidate_id, r.verdict.value) for r in verified.results],
+        len(ledger.entries),
+    )
 
     log.info("=== Step 6: Select and enrich ===")
-    enriched_uses, rejected = await select_and_enrich_activity(scored, verified, ctx)
+    enriched_uses, rejected = await select_and_enrich_activity(
+        scored, verified, ctx, retrieved=retrieved, ledger=ledger
+    )
     log.info("enriched %d use cases | %d rejected", len(enriched_uses), len(rejected))
 
     log.info("=== Step 7: Meta-evaluation ===")
-    review, fact_claims = await meta_evaluate_activity(enriched_uses, rejected, ctx)
+    review, fact_claims = await meta_evaluate_activity(
+        enriched_uses, rejected, ctx, retrieved=retrieved, ledger=ledger
+    )
     log.info(
         "ready=%s | confidence=%.2f | weakest=%s",
         review.sales_engineer_ready,
@@ -144,50 +165,67 @@ async def run_pipeline(params: WorkflowInput, write_md: Path | None) -> int:
     )
 
     # Targeted regeneration of the weakest use case if confidence below
-    # threshold (one round only — bounded cost, matches architecture spec).
+    # threshold. Replaces JUST that one use case with the next-best near-miss
+    # (single mistral-large call, ~30s) instead of re-enriching the whole
+    # top-3 (~90s — wasteful when only one candidate is the problem).
+    # Tier dispatch: fast skips regen entirely.
     original_confidence = review.confidence
     regenerated_use_case_id: str | None = None
-    if review.confidence < settings.meta_eval_confidence_threshold and review.weakest_use_case_id:
+    if (
+        settings.tier.value != "fast"
+        and review.confidence < settings.meta_eval_confidence_threshold
+        and review.weakest_use_case_id
+    ):
         log.info(
             "=== Step 7b: Regeneration (weakest use case = %s) ===",
             review.weakest_use_case_id,
         )
         weak_id = review.weakest_use_case_id
-        # Find the weakest use case in the current top-3 and re-enrich JUST that one
         weak_idx = next((i for i, u in enumerate(enriched_uses) if u.id == weak_id), None)
-        if weak_idx is not None:
-            # Force the weakest one OUT of the verified set so select_and_enrich
-            # promotes the next-highest near-miss in its place. Mark it as
-            # confirmed_existing — that's the verdict select_and_enrich uses to drop.
-            forced_drop = VerificationBatch(
-                results=[
-                    r
-                    if r.candidate_id != weak_id
-                    else VerificationResult(
-                        candidate_id=weak_id,
-                        verdict=VerificationVerdict.CONFIRMED_EXISTING,
-                        rationale="Marked for regen — meta-eval flagged as weakest.",
+        # Find the next-best ScoredCandidate that isn't already in top-3
+        in_top_3 = {u.id for u in enriched_uses}
+        replacement_sc = next(
+            (sc for sc in scored.scored if sc.candidate.id not in in_top_3),
+            None,
+        )
+        if weak_idx is not None and replacement_sc is not None:
+            replacement_enriched = await regen_one_use_case_activity(
+                weakest_id=weak_id,
+                replacement=replacement_sc,
+                ctx=ctx,
+                retrieved=retrieved,
+                ledger=ledger,
+                weakness_reason=review.weakness_reason,
+            )
+            if replacement_enriched is not None:
+                # Splice the replacement into top-3 and re-run meta-eval
+                new_uses = list(enriched_uses)
+                dropped_uc = new_uses[weak_idx]
+                new_uses[weak_idx] = replacement_enriched
+                new_rejected = list(rejected) + [
+                    RejectedCandidate(
+                        title=dropped_uc.title,
+                        one_line_reason="Replaced by regen — meta-eval flagged as weakest.",
                     )
-                    for r in verified.results
                 ]
-            )
-            new_uses, new_rejected = await select_and_enrich_activity(scored, forced_drop, ctx)
-            review2, fact_claims2 = await meta_evaluate_activity(new_uses, new_rejected, ctx)
-            log.info(
-                "regen result: confidence %.2f → %.2f | ready=%s",
-                original_confidence,
-                review2.confidence,
-                review2.sales_engineer_ready,
-            )
-            # Keep the regen if it actually improved confidence
-            if review2.confidence > original_confidence:
-                enriched_uses = new_uses
-                rejected = new_rejected
-                review = review2
-                fact_claims = fact_claims2
-                regenerated_use_case_id = weak_id
-            else:
-                log.info("regen did not improve confidence, keeping original")
+                review2, fact_claims2 = await meta_evaluate_activity(
+                    new_uses, new_rejected, ctx, retrieved=retrieved, ledger=ledger
+                )
+                log.info(
+                    "regen result: confidence %.2f → %.2f | ready=%s",
+                    original_confidence,
+                    review2.confidence,
+                    review2.sales_engineer_ready,
+                )
+                # Keep the regen if it actually improved confidence
+                if review2.confidence > original_confidence:
+                    enriched_uses = new_uses
+                    rejected = new_rejected
+                    review = review2
+                    fact_claims = fact_claims2
+                    regenerated_use_case_id = replacement_sc.candidate.id
+                else:
+                    log.info("regen did not improve confidence, keeping original")
 
     log.info("=== Quality signals ===")
     signals = await compute_quality_signals_activity(enriched_uses, ctx, fact_claims)
@@ -221,6 +259,22 @@ async def run_pipeline(params: WorkflowInput, write_md: Path | None) -> int:
         write_md.parent.mkdir(parents=True, exist_ok=True)
         write_md.write_text(md, encoding="utf-8")
         log.info("wrote markdown report to %s", write_md)
+        # Render the trace alongside the report
+        trace_path = write_md.with_name(write_md.stem + "_trace.md")
+        trace_md = (
+            "# Pipeline blueprint (architecture)\n\n"
+            "Static view of the pipeline regardless of run timing — shows agents,\n"
+            "models, and gates. The chronological execution log follows below.\n\n"
+            "```mermaid\n"
+            + trace.render_blueprint_flowchart()
+            + "```\n\n"
+            + trace.render_markdown()
+            + "\n\n## Mermaid sequence diagram (execution)\n\n```mermaid\n"
+            + trace.render_mermaid()
+            + "\n```\n"
+        )
+        trace_path.write_text(trace_md, encoding="utf-8")
+        log.info("wrote trace to %s", trace_path)
     print()
     print(md)
     return 0
@@ -253,6 +307,12 @@ def main() -> int:
         default=None,
         help="optional markdown output path (e.g. docs/examples/carrefour.md)",
     )
+    parser.add_argument(
+        "--tier",
+        choices=[t.value for t in Tier],
+        default=Tier.STANDARD.value,
+        help="performance tier: fast (~60-90s), standard (~2-3 min, default), max (~5-7 min)",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -263,6 +323,10 @@ def main() -> int:
     # Quiet a few noisy ones
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("mistralai").setLevel(logging.WARNING)
+
+    # Apply tier override at startup so activities see the right setting
+    settings.tier = Tier(args.tier)
+    logger.info("tier set to %s", settings.tier.value)
 
     params = WorkflowInput(
         company_name=args.company_name,
