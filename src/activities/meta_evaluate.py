@@ -109,25 +109,58 @@ def _format_cited_precedents(
     return "\n".join(lines)
 
 
-def _format_cited_ledger(
+def _format_full_evidence_pool(
     uses: list[EnrichedUseCase], ledger: EvidenceLedger | None
 ) -> str:
+    """Render the FULL evidence pool the meta-eval can use to verify claims.
+
+    Earlier versions only showed entries cited via `evidence_ids` — this
+    artificially narrowed support, causing meta-eval to mark real claims
+    like Veolia's GreenUp program or L'Oréal's ModiFace face-scan as
+    unsupported just because the use case didn't explicitly cite the
+    gap-fill ledger entry where they were retrieved.
+
+    Now we show every ledger entry (Wikipedia summary, news bodies,
+    gap-fill Tavily results, generation_tool web_search results,
+    per-candidate verification deep-reads, existing-initiative source
+    URLs, company-verification URLs). Each entry's content is capped at
+    1200 chars so the full pool fits in the meta-eval's token budget.
+    Cited entries are flagged inline so meta-eval can prioritize them
+    while still being free to find support elsewhere.
+    """
     if ledger is None or not ledger.entries:
         return "(no ledger entries)"
     cited_ids: set[str] = set()
     for uc in uses:
         cited_ids.update(uc.evidence_ids)
-    if not cited_ids:
-        return "(no ledger entries cited by any use case)"
     lines: list[str] = []
-    for eid in sorted(cited_ids):
-        item = ledger.by_id(eid)
-        if item is None:
-            lines.append(f"--- {eid} (NOT FOUND IN LEDGER)")
-            continue
-        body = item.content[:2500]
+    # Order: prefer entries the model actually cited first (model already
+    # thought these mattered), then the rest by source-kind priority.
+    _kind_priority = {
+        "gap_fill": 0,
+        "news": 1,
+        "company_verification": 2,
+        "generation_tool": 3,
+        "wikipedia": 4,
+        "existing_initiative": 5,
+        "per_candidate_verification": 6,
+        "tavily": 7,
+        "precedent": 8,
+        "jobs": 9,
+    }
+    sorted_entries = sorted(
+        ledger.entries,
+        key=lambda e: (
+            0 if e.id in cited_ids else 1,
+            _kind_priority.get(e.source_kind.value, 99),
+        ),
+    )
+    for item in sorted_entries:
+        cited_marker = " [CITED IN A USE CASE]" if item.id in cited_ids else ""
+        body = (item.content or "")[:1200]
         lines.append(
-            f"--- {eid} ({item.source_kind.value}, confidence={item.confidence}) ---\n"
+            f"--- {item.id} ({item.source_kind.value}, "
+            f"confidence={item.confidence}){cited_marker} ---\n"
             f"URL: {item.url or '(none)'}\n"
             f"Title: {item.title}\n"
             f"Content:\n{body}\n"
@@ -152,8 +185,8 @@ def _build_user_message(
         + _format_use_cases(uses)
         + "\n\n# Cited precedents (deep content for verifying peer-deployment claims)\n"
         + _format_cited_precedents(uses, retrieved)
-        + "\n\n# Cited ledger entries (web sources for verifying current company claims)\n"
-        + _format_cited_ledger(uses, ledger)
+        + "\n\n# Full evidence pool (ALL ledger entries — use any to verify claims)\n"
+        + _format_full_evidence_pool(uses, ledger)
         + "\n\n# Rejected appendix (near-misses)\n"
         + rej_lines
         + "\n\nReturn STRICT JSON per the system spec. Remember: every claim's "

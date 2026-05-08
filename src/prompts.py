@@ -354,8 +354,15 @@ deliverable. You are given:
   - The rejected appendix
   - The CITED PRECEDENTS' deep-read content (so you can verify peer-
     deployment claims literally)
-  - The CITED LEDGER ENTRIES' content (web-search results the generator
-    pulled, so you can verify claims about current company state)
+  - The FULL EVIDENCE POOL — every ledger entry the pipeline retrieved
+    during research (Wikipedia, news, gap-fill Tavily searches, generation-
+    step web_search results, per-candidate verification deep-reads, existing-
+    initiative URLs, company-verification URLs). Entries the use cases
+    explicitly cited are flagged "[CITED IN A USE CASE]"; the rest are
+    available too — a claim is supported if ANY entry in the pool contains
+    text supporting it, even if that specific entry was not cited via
+    evidence_ids in the use case. Treat the explicit citation as a hint
+    of where to look first, not a constraint on where support can come from.
 
 Answer rigorously:
 
@@ -375,18 +382,32 @@ Output:
              supporting_signal: str | null, source_kind: str | null}]`
 
 CRITICAL — strict claim verification rules (this is the fact-check):
-- For `supported: true`, the cited evidence's CONTENT must contain text
-  that DIRECTLY supports the claim. A loosely-related URL, a precedent
-  whose deep_content doesn't mention the figure, or a tangential ledger
-  entry does NOT count.
+- For `supported: true`, the EVIDENCE POOL must contain text that
+  supports the claim. The supporting text can come from ANY entry in the
+  full evidence pool — cited or not. It does NOT have to be the entry
+  the use case explicitly cited via evidence_ids.
+  Example: if the use case mentions "Veolia's GreenUp program" without
+  citing a specific evidence_id, but a gap-fill ledger entry contains
+  "Veolia announced the GreenUp strategic plan in 2024", that's
+  SUPPORTED — point at the gap-fill entry as supporting_signal.
 - In `supporting_signal`, QUOTE the literal supporting sentence from the
-  source — not a paraphrase. If you cannot find a directly-supporting
-  sentence, set `supported: false`.
+  source. Paraphrase is acceptable as long as the source genuinely
+  contains the named entity, the figure, or the named program. If
+  nothing in the entire evidence pool mentions the specific named
+  entity / figure / program, set `supported: false`.
 - `source_kind`: one of "company_context" (with the field path),
-  "precedent:<id>", "evidence:<ev-id>", or null when unsupported.
-- Numeric claims (percentages, scale figures, time-to-value windows) must
-  match a number in the cited source. "8-15% reduction" is supported only
-  if a cited precedent text actually says "8-15%" with the same metric.
+  "precedent:<id>", "evidence:<ev-id>" (use the actual ledger id whether
+  it was cited or not), or null when unsupported.
+- Numeric claims (percentages, scale figures, time-to-value windows) are
+  supported only if a number that matches (or close to it) appears in
+  the evidence pool with the same context. "8-15% reduction" is
+  supported if a precedent or ledger entry says "8-15%" or "10%" near
+  the same topic.
+- Named-entity claims (specific products, programs, partnerships,
+  platforms — "ModiFace", "Mistral Forge", "GreenUp", "Hubgrade") are
+  supported if any pool entry mentions that name, even briefly. These
+  names are real things; if they appear anywhere in the pool, mark
+  supported. Do NOT require a long quote.
 - Generic claims like "this company has lots of data" are NOT substantive
   and don't need a fact-check entry — focus on specific factual claims.
 
