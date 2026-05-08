@@ -69,10 +69,19 @@ class Settings(BaseSettings):
     research_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     meta_eval_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     diversity_threshold: float = Field(
-        default=0.85,
+        default=0.92,
         ge=0.0,
         le=1.0,
-        description="Pairwise cosine similarity above this triggers regeneration of candidate batch.",
+        description=(
+            "Avg pairwise candidate-cosine ABOVE this triggers a diversity "
+            "regen of the 12 candidates. Calibrated against observed corpus "
+            "behavior: random pairs in our corpus cluster at mean=0.78, std=0.03. "
+            "Candidate descriptions written by the same enrichment LLM in the "
+            "same voice cluster even tighter (~0.83-0.87 baseline). Threshold of "
+            "0.85 fired regen on every run with negligible improvement (e.g. "
+            "0.866→0.849); 0.92 fires only when candidates are genuinely "
+            "repetitive. Saves ~30-40s per run."
+        ),
     )
 
     # ---- Data layer --------------------------------------------------------
