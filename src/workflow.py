@@ -26,6 +26,7 @@ assistant.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import timedelta
 
 import mistralai.workflows as workflows
@@ -44,6 +45,8 @@ from src.activities.select_enrich import select_and_enrich_activity
 from src.activities.verify_per_candidate import verify_top_candidates_activity
 from src.config import settings
 from src.models import (
+    CriteriaWeights,
+    FocusArea,
     Report,
     WorkflowInput,
     WorkflowStatus,
@@ -51,6 +54,46 @@ from src.models import (
 from src.ui.render import render_report_to_components, render_report_to_markdown
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_customization(text: str, params: WorkflowInput) -> WorkflowInput:
+    """Parse a free-form customization string from the Step 0 ChatInput and
+    return updated WorkflowInput. Recognized patterns:
+
+      - One of {general, operations, customer, sustainability} mentioned
+        anywhere → sets focus_area
+      - Five space- or comma-separated floats anywhere (each in [0, 1]) →
+        sets criteria weights in order: relevance, iconic, impact,
+        feasibility, mistral
+
+    Returns the original params unchanged if parsing finds nothing usable.
+    Pure function — safe to call from workflow code.
+    """
+    text_lower = text.lower().strip()
+    if not text_lower or text_lower in {"default", "go", "ok", "skip", "no"}:
+        return params
+
+    new_params = params.model_copy(deep=True)
+    for fa in FocusArea:
+        if fa.value in text_lower:
+            new_params.focus_area = fa
+            break
+
+    floats = re.findall(r"\d*\.\d+|\d+", text_lower)
+    if len(floats) >= 5:
+        try:
+            f = [float(x) for x in floats[:5]]
+            if all(0.0 <= w <= 1.0 for w in f):
+                new_params.weights = CriteriaWeights(
+                    relevance=f[0],
+                    iconic_potential=f[1],
+                    estimated_impact=f[2],
+                    feasibility=f[3],
+                    mistral_suitability=f[4],
+                )
+        except (ValueError, TypeError):
+            pass
+    return new_params
 
 
 def _build_refusal_output(
@@ -101,6 +144,49 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
     @workflows.workflow.entrypoint
     async def run(self, params: WorkflowInput) -> workflows_mistralai.ChatAssistantWorkflowOutput:
         self.company_name = params.company_name
+
+        # Step 0 — optional clarification checkpoint.
+        # Two-stage interactive flow using Mistral Workflows' wait_for_input:
+        #   (a) ConfirmationInput — does the user want defaults or to customize?
+        #   (b) If 'custom', ChatInput collects free-form focus + weights.
+        # Skipping the form is fine; the workflow proceeds with whatever
+        # WorkflowInput was passed in.
+        self.current_step = "clarification"
+        self.progress_percent = 2.0
+        try:
+            confirm = await self.wait_for_input(
+                workflows_mistralai.ConfirmationInput(
+                    options=[
+                        ("default", "Use defaults"),
+                        ("custom", "Customize focus + criteria weights"),
+                    ],
+                    description=(
+                        f"Generating GenAI use cases for **{params.company_name}**.\n\n"
+                        f"Default config: focus = `{params.focus_area.value}`, "
+                        f"all five criteria weighted equally (0.20 each).\n\n"
+                        f"Click **Use defaults** to proceed, or **Customize** to "
+                        f"adjust focus area and weights."
+                    ),
+                )
+            )
+            if getattr(confirm, "choice", "default") == "custom":
+                chat_in = await self.wait_for_input(
+                    workflows_mistralai.ChatInput(
+                        prompt=(
+                            "Type focus area + weights, e.g.: "
+                            "'operations, weights 0.3 0.3 0.2 0.1 0.1'  "
+                            "(focus options: general / operations / customer / "
+                            "sustainability; weights are 5 floats 0-1 in order: "
+                            "relevance, iconic, impact, feasibility, mistral)"
+                        ),
+                    )
+                )
+                params = _parse_customization(getattr(chat_in, "message", "") or "", params)
+        except Exception as e:  # noqa: BLE001
+            # If the runtime doesn't support interactive input (e.g. CLI
+            # invocation, older worker), proceed silently with defaults.
+            logger.info("workflow: Step 0 skipped (%s) — using passed params", type(e).__name__)
+
         self.current_step = "research"
         self.progress_percent = 5.0
 
