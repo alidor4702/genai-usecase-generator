@@ -23,31 +23,14 @@ import logging
 import sys
 from pathlib import Path
 
-from src.activities.compute_signals import compute_quality_signals_activity
-from src.activities.generate import generate_candidates_activity
-from src.activities.meta_evaluate import meta_evaluate_activity
-from src.activities.research import (
-    enrich_company_context_activity,
-    gather_bundle_for_company,
-    research_company_activity,
-)
-from src.activities.retrieve import retrieve_precedents_activity
-from src.activities.score import score_candidates_activity
-from src.activities.select_enrich import (
-    regen_one_use_case_activity,
-    select_and_enrich_activity,
-)
-from src.activities.verify_per_candidate import verify_top_candidates_activity
 from src.config import Tier, settings
 from src.models import (
     CriteriaWeights,
     FocusArea,
-    RejectedCandidate,
-    Report,
     ResearchDepth,
     WorkflowInput,
 )
-from src.trace import start_run_trace
+from src.pipeline import execute_pipeline
 from src.ui.render import render_report_to_markdown
 
 logger = logging.getLogger(__name__)
@@ -77,184 +60,16 @@ def _parse_weights(s: str | None) -> CriteriaWeights:
 async def run_pipeline(params: WorkflowInput, write_md: Path | None) -> int:
     log = logging.getLogger("run_example")
 
-    # Initialize the per-run pipeline action trace. Activities will record
-    # events into it via the ContextVar; we render it to a `_trace.md` file
-    # next to the report so users can inspect the agent flow + timings.
-    trace = start_run_trace(params.company_name)
-    log.info("trace: started for %s at %s", params.company_name, trace.started_at.isoformat())
+    result = await execute_pipeline(params)
 
-    log.info("=== Step 1: Research ===")
-    ctx, ledger = await research_company_activity(params.company_name, params.research_depth)
-    log.info(
-        "research_confidence=%.2f | is_verified=%s | industry=%s | sources=%s | ledger=%d",
-        ctx.meta.research_confidence,
-        ctx.meta.is_verified,
-        ctx.classification.industry,
-        ctx.meta.research_sources,
-        len(ledger.entries),
-    )
-
-    log.info("=== Step 1b: Context completion (gap-fill) ===")
-    ctx, ledger = await enrich_company_context_activity(ctx, ledger)
-    log.info(
-        "after enrich: confidence=%.2f | industry=%s | priorities=%d | data_assets=%d | ledger=%d",
-        ctx.meta.research_confidence,
-        ctx.classification.industry,
-        len(ctx.strategic_context.stated_priorities),
-        len(ctx.data_and_tech.likely_data_assets),
-        len(ledger.entries),
-    )
-
-    confidence_ok = (
-        ctx.meta.research_confidence >= settings.research_confidence_threshold
-        or ctx.meta.is_verified
-        or len(ctx.existing_ai_initiatives) > 0
-    )
-    if not confidence_ok:
-        log.warning("Refusal: research signal too sparse for %s", params.company_name)
-        print(f"\nREFUSAL: Couldn't find enough information about {params.company_name}.")
+    if result.refused:
+        log.warning("Refusal: %s", result.refusal_reason)
+        print(f"\nREFUSAL: {result.refusal_reason}")
         return 2
 
-    log.info("=== Step 2: Retrieve precedents ===")
-    retrieved = await retrieve_precedents_activity(ctx, settings.top_k_precedents)
-    log.info("retrieved %d precedents", len(retrieved.items))
-
-    log.info("=== Step 3: Generate 12 candidates ===")
-    bundle = await gather_bundle_for_company(params.company_name, params.research_depth)
-    batch, ledger = await generate_candidates_activity(
-        ctx, retrieved, params.focus_area.value, True, raw_bundle=bundle, ledger=ledger
-    )
-    log.info(
-        "generated %d candidates | diversity=%.3f | regenerated=%s | ledger=%d",
-        len(batch.candidates),
-        batch.diversity_score,
-        batch.regenerated_for_diversity,
-        len(ledger.entries),
-    )
-
-    log.info("=== Step 4: Score (self-consistency, 2 passes) ===")
-    scored = await score_candidates_activity(batch, ctx, params.weights)
-    log.info("top-3 aggregate scores: %s", [round(s.aggregate_score, 2) for s in scored.scored[:3]])
-
-    log.info("=== Step 5: Per-candidate verification of top-3 ===")
-    top_3 = scored.scored[:3]
-    verified, ledger = await verify_top_candidates_activity(
-        top_3, ctx, params.company_name, ledger=ledger
-    )
-    log.info(
-        "verdicts: %s | ledger=%d",
-        [(r.candidate_id, r.verdict.value) for r in verified.results],
-        len(ledger.entries),
-    )
-
-    log.info("=== Step 6: Select and enrich ===")
-    enriched_uses, rejected = await select_and_enrich_activity(
-        scored, verified, ctx, retrieved=retrieved, ledger=ledger
-    )
-    log.info("enriched %d use cases | %d rejected", len(enriched_uses), len(rejected))
-
-    log.info("=== Step 7: Meta-evaluation ===")
-    review, fact_claims = await meta_evaluate_activity(
-        enriched_uses, rejected, ctx, retrieved=retrieved, ledger=ledger
-    )
-    log.info(
-        "ready=%s | confidence=%.2f | weakest=%s",
-        review.sales_engineer_ready,
-        review.confidence,
-        review.weakest_use_case_id,
-    )
-
-    # Targeted regeneration of the weakest use case if confidence below
-    # threshold. Replaces JUST that one use case with the next-best near-miss
-    # (single mistral-large call, ~30s) instead of re-enriching the whole
-    # top-3 (~90s — wasteful when only one candidate is the problem).
-    # Tier dispatch: fast skips regen entirely.
-    original_confidence = review.confidence
-    regenerated_use_case_id: str | None = None
-    if (
-        settings.tier.value != "fast"
-        and review.confidence < settings.meta_eval_confidence_threshold
-        and review.weakest_use_case_id
-    ):
-        log.info(
-            "=== Step 7b: Regeneration (weakest use case = %s) ===",
-            review.weakest_use_case_id,
-        )
-        weak_id = review.weakest_use_case_id
-        weak_idx = next((i for i, u in enumerate(enriched_uses) if u.id == weak_id), None)
-        # Find the next-best ScoredCandidate that isn't already in top-3
-        in_top_3 = {u.id for u in enriched_uses}
-        replacement_sc = next(
-            (sc for sc in scored.scored if sc.candidate.id not in in_top_3),
-            None,
-        )
-        if weak_idx is not None and replacement_sc is not None:
-            replacement_enriched = await regen_one_use_case_activity(
-                weakest_id=weak_id,
-                replacement=replacement_sc,
-                ctx=ctx,
-                retrieved=retrieved,
-                ledger=ledger,
-                weakness_reason=review.weakness_reason,
-            )
-            if replacement_enriched is not None:
-                # Splice the replacement into top-3 and re-run meta-eval
-                new_uses = list(enriched_uses)
-                dropped_uc = new_uses[weak_idx]
-                new_uses[weak_idx] = replacement_enriched
-                new_rejected = list(rejected) + [
-                    RejectedCandidate(
-                        title=dropped_uc.title,
-                        one_line_reason="Replaced by regen — meta-eval flagged as weakest.",
-                    )
-                ]
-                review2, fact_claims2 = await meta_evaluate_activity(
-                    new_uses, new_rejected, ctx, retrieved=retrieved, ledger=ledger
-                )
-                log.info(
-                    "regen result: confidence %.2f → %.2f | ready=%s",
-                    original_confidence,
-                    review2.confidence,
-                    review2.sales_engineer_ready,
-                )
-                # Keep the regen if it actually improved confidence
-                if review2.confidence > original_confidence:
-                    enriched_uses = new_uses
-                    rejected = new_rejected
-                    review = review2
-                    fact_claims = fact_claims2
-                    regenerated_use_case_id = replacement_sc.candidate.id
-                else:
-                    log.info("regen did not improve confidence, keeping original")
-
-    log.info("=== Quality signals ===")
-    signals = await compute_quality_signals_activity(enriched_uses, ctx, fact_claims)
-    if regenerated_use_case_id:
-        log.info(
-            "regen footer: original_confidence=%.2f, regenerated=%s, final_confidence=%.2f",
-            original_confidence,
-            regenerated_use_case_id,
-            review.confidence,
-        )
-
-    intro = (
-        f"GenAI use cases for {ctx.identity.name}: three customer-ready proposals "
-        f"scored against the five-criteria rubric and verified against "
-        f"{len(ctx.existing_ai_initiatives)} existing AI initiatives discovered during research."
-    )
-    report = Report(
-        company=ctx,
-        weights_used=params.weights,
-        focus_area=params.focus_area,
-        research_depth=params.research_depth,
-        top_use_cases=enriched_uses,
-        rejected_appendix=rejected,
-        quality=signals,
-        meta_review=review,
-        intro_text=intro,
-    )
-
-    md = render_report_to_markdown(report)
+    assert result.report is not None  # narrowing for type-checker
+    md = render_report_to_markdown(result.report)
+    trace = result.trace
     if write_md:
         write_md.parent.mkdir(parents=True, exist_ok=True)
         write_md.write_text(md, encoding="utf-8")
