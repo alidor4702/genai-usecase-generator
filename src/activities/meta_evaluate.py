@@ -18,12 +18,15 @@ import mistralai.workflows as workflows
 from mistralai.client import Mistral
 
 from src.config import settings
+from src.trace import trace_step
 from src.models import (
     CompanyContext,
     EnrichedUseCase,
+    EvidenceLedger,
     FactCheckEntry,
     MetaEvalReview,
     RejectedCandidate,
+    RetrievedPrecedents,
 )
 from src.prompts import META_EVALUATION_SYSTEM
 
@@ -55,6 +58,8 @@ def _format_use_cases(uses: list[EnrichedUseCase]) -> str:
             f"Cost tier: {uc.operating_cost_tier.value}\n"
             f"Top implementation risk: {uc.top_implementation_risk}\n"
             f"Builds on existing: {uc.builds_on_existing}\n"
+            f"Cited inspired_by: {', '.join(uc.inspired_by) or '(none)'}\n"
+            f"Cited evidence_ids: {', '.join(uc.evidence_ids) or '(none)'}\n"
         )
     return "\n".join(out)
 
@@ -65,10 +70,70 @@ def _format_existing(ctx: CompanyContext) -> str:
     return "\n".join(f"- {ei.description[:600]}" for ei in ctx.existing_ai_initiatives)
 
 
+def _format_cited_precedents(
+    uses: list[EnrichedUseCase], retrieved: RetrievedPrecedents | None
+) -> str:
+    """Show only the precedents actually cited across the use cases — keeps
+    the meta-eval prompt within token budget while still letting it verify
+    every peer-deployment claim."""
+    if retrieved is None:
+        return "(no retrieved precedents available)"
+    cited_ids: set[str] = set()
+    for uc in uses:
+        cited_ids.update(uc.inspired_by)
+    if not cited_ids:
+        return "(no precedents cited by any use case)"
+    by_id = {p.id: p for p in retrieved.items}
+    lines: list[str] = []
+    for pid in sorted(cited_ids):
+        p = by_id.get(pid)
+        if p is None:
+            lines.append(f"--- {pid} (NOT IN RETRIEVED SET — likely fabricated)")
+            continue
+        body = (p.deep_content or p.description or "")[:3000]
+        lines.append(
+            f"--- {pid} ---\n"
+            f"Company: {p.company}\n"
+            f"Industry: {p.industry}\n"
+            f"Title: {p.title}\n"
+            f"Source URL: {p.source_url or '(none)'}\n"
+            f"Deep content:\n{body}\n"
+        )
+    return "\n".join(lines)
+
+
+def _format_cited_ledger(
+    uses: list[EnrichedUseCase], ledger: EvidenceLedger | None
+) -> str:
+    if ledger is None or not ledger.entries:
+        return "(no ledger entries)"
+    cited_ids: set[str] = set()
+    for uc in uses:
+        cited_ids.update(uc.evidence_ids)
+    if not cited_ids:
+        return "(no ledger entries cited by any use case)"
+    lines: list[str] = []
+    for eid in sorted(cited_ids):
+        item = ledger.by_id(eid)
+        if item is None:
+            lines.append(f"--- {eid} (NOT FOUND IN LEDGER)")
+            continue
+        body = item.content[:2500]
+        lines.append(
+            f"--- {eid} ({item.source_kind.value}, confidence={item.confidence}) ---\n"
+            f"URL: {item.url or '(none)'}\n"
+            f"Title: {item.title}\n"
+            f"Content:\n{body}\n"
+        )
+    return "\n".join(lines)
+
+
 def _build_user_message(
     uses: list[EnrichedUseCase],
     rejected: list[RejectedCandidate],
     ctx: CompanyContext,
+    retrieved: RetrievedPrecedents | None,
+    ledger: EvidenceLedger | None,
 ) -> str:
     rej_lines = "\n".join(f"- {r.title}: {r.one_line_reason}" for r in rejected) or "(none)"
     return (
@@ -78,34 +143,55 @@ def _build_user_message(
         + _format_existing(ctx)
         + "\n\n# Three enriched use cases to review\n"
         + _format_use_cases(uses)
+        + "\n\n# Cited precedents (deep content for verifying peer-deployment claims)\n"
+        + _format_cited_precedents(uses, retrieved)
+        + "\n\n# Cited ledger entries (web sources for verifying current company claims)\n"
+        + _format_cited_ledger(uses, ledger)
         + "\n\n# Rejected appendix (near-misses)\n"
         + rej_lines
-        + "\n\nReturn STRICT JSON per the system spec."
+        + "\n\nReturn STRICT JSON per the system spec. Remember: every claim's "
+        "supporting_signal must be a literal quote from the cited source."
     )
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=180))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=300))
 async def meta_evaluate_activity(
     uses: list[EnrichedUseCase],
     rejected: list[RejectedCandidate],
     ctx: CompanyContext,
+    retrieved: RetrievedPrecedents | None = None,
+    ledger: EvidenceLedger | None = None,
 ) -> tuple[MetaEvalReview, list[FactCheckEntry]]:
+    """Step 7 — meta-evaluation. Reviews the enriched report and grades it.
+
+    With `retrieved` and `ledger` populated, the LLM also verifies each
+    factual claim against cited precedent deep_content and cited ledger
+    entries. Pass rate now reflects whether claims are LITERALLY supported
+    by source content, not just whether the CompanyContext mentions them.
+    """
     if not settings.mistral_api_key:
         raise RuntimeError("MISTRAL_API_KEY required for meta-evaluation")
 
     client = Mistral(api_key=settings.mistral_api_key)
-    user_msg = _build_user_message(uses, rejected, ctx)
-    r = await client.chat.complete_async(
-        model=settings.mistral_meta_eval_model,
-        temperature=0.1,
-        max_tokens=4000,
-        timeout_ms=180_000,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": META_EVALUATION_SYSTEM},
-            {"role": "user", "content": user_msg},
-        ],
-    )
+    user_msg = _build_user_message(uses, rejected, ctx, retrieved, ledger)
+    async with trace_step(
+        "meta_eval",
+        settings.mistral_meta_eval_model,
+        "chat.complete",
+        inputs_summary=f"reviewing {len(uses)} use cases",
+    ) as ev:
+        r = await client.chat.complete_async(
+            model=settings.mistral_meta_eval_model,
+            temperature=0.1,
+            max_tokens=10_000,
+            timeout_ms=240_000,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": META_EVALUATION_SYSTEM},
+                {"role": "user", "content": user_msg},
+            ],
+        )
+        ev.outputs_summary = "review + claims"
     text = r.choices[0].message.content
     if isinstance(text, list):
         text = "".join(getattr(b, "text", "") for b in text)
