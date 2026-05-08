@@ -567,10 +567,14 @@ async def _attribution_check_use_case(
 
 
 _URL_RE = re.compile(r"https?://[^\s\)\]]+")
+# Detect empty-link markdown like `[Source name]()` left over when the polish
+# pass tried to insert a citation but the ledger entry had no URL.
+_EMPTY_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(\s*\)")
 
 
 def _strip_fabricated_urls(text: str, valid_urls: set[str]) -> tuple[str, list[str]]:
-    """Remove any URL not in `valid_urls` (from the ledger). Returns
+    """Remove any URL not in `valid_urls` (from the ledger), then collapse any
+    empty-link markdown `[text]()` to just `text`. Returns
     (cleaned_text, list_of_dropped_urls)."""
     if not text:
         return text, []
@@ -584,6 +588,10 @@ def _strip_fabricated_urls(text: str, valid_urls: set[str]) -> tuple[str, list[s
         return ""
 
     cleaned = _URL_RE.sub(_check, text)
+    # Collapse any `[text]()` (left after the URL was stripped, or emitted by
+    # the polish LLM when no URL was available) to bare `text` — broken
+    # markdown is worse than no link.
+    cleaned = _EMPTY_MD_LINK_RE.sub(lambda m: m.group(1), cleaned)
     return cleaned, dropped
 
 
