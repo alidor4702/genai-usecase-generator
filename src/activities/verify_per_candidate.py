@@ -25,8 +25,12 @@ from tavily import AsyncTavilyClient
 
 from scripts._fetch import extract_main_text, fetch_html
 from src.config import settings
+from src.evidence import from_tavily_result
+from src.trace import trace_step
 from src.models import (
     CompanyContext,
+    EvidenceKind,
+    EvidenceLedger,
     ScoredCandidate,
     VerificationBatch,
     VerificationResult,
@@ -82,17 +86,36 @@ async def _verify_one(
     http: httpx.AsyncClient,
     mistral: Mistral,
     sem: asyncio.Semaphore,
-) -> VerificationResult:
+) -> tuple[VerificationResult, list[tuple[str, str, str]]]:
+    """Verify one candidate. Returns (result, fetched_sources) where
+    fetched_sources is a list of (url, title, content) tuples for every URL
+    we deep-read — the caller adds these to the EvidenceLedger so meta-eval
+    can verify claims against the source content."""
     async with sem:
         query = _candidate_query(company_name, sc)
-        results = await _tavily_top_results(tavily_client, query)
+        async with trace_step(
+            "verify",
+            "tavily",
+            "search",
+            inputs_summary=f"candidate={sc.candidate.id} | query={query[:60]!r}",
+        ) as ev:
+            results = await _tavily_top_results(tavily_client, query)
+            ev.outputs_summary = f"{len(results)} results"
         urls = [str(r.get("url")) for r in results if r.get("url")]
         snippets = [str(r.get("content") or "")[:1000] for r in results]
         deep_pairs = await _deep_read_top(http, urls)
+        deep_lookup = {url: body for url, body in deep_pairs}
 
         evidence_lines: list[str] = []
+        fetched_sources: list[tuple[str, str, str]] = []
         for r, snippet in zip(results, snippets, strict=False):
-            evidence_lines.append(f"- [{r.get('title')}]({r.get('url')}): {snippet}")
+            url = str(r.get("url") or "")
+            title = str(r.get("title") or "")
+            evidence_lines.append(f"- [{title}]({url}): {snippet}")
+            # Prefer deep-read body; fall back to snippet
+            body = deep_lookup.get(url) or snippet
+            if url and title and body:
+                fetched_sources.append((url, title, body))
         for url, body in deep_pairs:
             evidence_lines.append(f"\n--- DEEP-READ {url} ---\n{body[:4000]}")
 
@@ -106,28 +129,38 @@ async def _verify_one(
         )
 
         try:
-            r = await mistral.chat.complete_async(
-                model=settings.mistral_verification_model,
-                temperature=0.1,
-                max_tokens=1200,
-                timeout_ms=90_000,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": VERIFICATION_SYSTEM},
-                    {"role": "user", "content": user_msg},
-                ],
-            )
-            text = r.choices[0].message.content
-            if isinstance(text, list):
-                text = "".join(getattr(b, "text", "") for b in text)
-            data = json.loads(_strip_fence(str(text or "")))
+            async with trace_step(
+                "verify",
+                settings.mistral_verification_model,
+                "chat.complete",
+                inputs_summary=f"verdict for {sc.candidate.id}",
+            ) as ev:
+                r = await mistral.chat.complete_async(
+                    model=settings.mistral_verification_model,
+                    temperature=0.1,
+                    max_tokens=1500,
+                    timeout_ms=90_000,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": VERIFICATION_SYSTEM},
+                        {"role": "user", "content": user_msg},
+                    ],
+                )
+                text = r.choices[0].message.content
+                if isinstance(text, list):
+                    text = "".join(getattr(b, "text", "") for b in text)
+                data = json.loads(_strip_fence(str(text or "")))
+                ev.outputs_summary = f"verdict={data.get('verdict')!r}"
         except Exception as e:
             logger.warning("verify: LLM call failed for %s: %s", sc.candidate.id, type(e).__name__)
-            return VerificationResult(
-                candidate_id=sc.candidate.id,
-                verdict=VerificationVerdict.PASS,
-                rationale="Verifier failed; defaulting to pass per the inconclusive-evidence rule.",
-                sources_consulted=urls,
+            return (
+                VerificationResult(
+                    candidate_id=sc.candidate.id,
+                    verdict=VerificationVerdict.PASS,
+                    rationale="Verifier failed; defaulting to pass per the inconclusive-evidence rule.",
+                    sources_consulted=urls,
+                ),
+                fetched_sources,
             )
 
         verdict_str = str(data.get("verdict", "pass"))
@@ -135,11 +168,14 @@ async def _verify_one(
             verdict = VerificationVerdict(verdict_str)
         except ValueError:
             verdict = VerificationVerdict.PASS
-        return VerificationResult(
-            candidate_id=sc.candidate.id,
-            verdict=verdict,
-            rationale=str(data.get("rationale", "")),
-            sources_consulted=list(data.get("sources_consulted") or urls),
+        return (
+            VerificationResult(
+                candidate_id=sc.candidate.id,
+                verdict=verdict,
+                rationale=str(data.get("rationale", "")),
+                sources_consulted=list(data.get("sources_consulted") or urls),
+            ),
+            fetched_sources,
         )
 
 
@@ -148,29 +184,60 @@ async def verify_top_candidates_activity(
     top_candidates: list[ScoredCandidate],
     ctx: CompanyContext,
     company_name: str,
-) -> VerificationBatch:
+    ledger: EvidenceLedger | None = None,
+) -> tuple[VerificationBatch, EvidenceLedger]:
+    """Per-candidate verification via Tavily + deep-read + Mistral Small verdict.
+
+    Every URL we deep-read for verification is appended to the EvidenceLedger
+    so meta-eval can verify the candidate's claims against the same content
+    the verifier saw.
+    """
+    if ledger is None:
+        ledger = EvidenceLedger()
     if not top_candidates:
-        return VerificationBatch(results=[])
+        return VerificationBatch(results=[]), ledger
     if not settings.mistral_api_key:
         raise RuntimeError("MISTRAL_API_KEY required for verification")
     if not settings.tavily_api_key:
         logger.warning("verify: TAVILY_API_KEY missing; defaulting all candidates to pass")
-        return VerificationBatch(
-            results=[
-                VerificationResult(
-                    candidate_id=sc.candidate.id,
-                    verdict=VerificationVerdict.PASS,
-                    rationale="No Tavily key available; defaulting to pass.",
-                )
-                for sc in top_candidates
-            ]
+        return (
+            VerificationBatch(
+                results=[
+                    VerificationResult(
+                        candidate_id=sc.candidate.id,
+                        verdict=VerificationVerdict.PASS,
+                        rationale="No Tavily key available; defaulting to pass.",
+                    )
+                    for sc in top_candidates
+                ]
+            ),
+            ledger,
         )
 
     mistral = Mistral(api_key=settings.mistral_api_key)
     tavily = AsyncTavilyClient(api_key=settings.tavily_api_key)
     sem = asyncio.Semaphore(3)
     async with httpx.AsyncClient(headers={"User-Agent": settings.user_agent}) as http:
-        results = await asyncio.gather(
+        pairs = await asyncio.gather(
             *(_verify_one(sc, company_name, tavily, http, mistral, sem) for sc in top_candidates)
         )
-    return VerificationBatch(results=list(results))
+    results: list[VerificationResult] = []
+    for verdict_result, fetched_sources in pairs:
+        results.append(verdict_result)
+        for url, title, content in fetched_sources:
+            ledger.add(
+                from_tavily_result(
+                    url,
+                    title,
+                    content,
+                    kind=EvidenceKind.PER_CANDIDATE_VERIFICATION,
+                    fetched_at_step="verification",
+                    confidence="medium",
+                )
+            )
+    logger.info(
+        "verify: %d candidates verified | ledger now has %d entries",
+        len(results),
+        len(ledger.entries),
+    )
+    return VerificationBatch(results=results), ledger
