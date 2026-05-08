@@ -104,11 +104,12 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         self.current_step = "research"
         self.progress_percent = 5.0
 
-        ctx = await research_company_activity(params.company_name, params.research_depth)
+        ctx, ledger = await research_company_activity(params.company_name, params.research_depth)
 
         self.current_step = "enrich_context"
         self.progress_percent = 12.0
-        ctx = await enrich_company_context_activity(ctx)
+        ctx, ledger = await enrich_company_context_activity(ctx, ledger)
+        logger.info("workflow: evidence ledger seeded with %d entries", len(ledger.entries))
 
         # Confidence gate (after the context-completion pass)
         confidence_ok = (
@@ -126,7 +127,9 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
 
         self.current_step = "generate"
         self.progress_percent = 35.0
-        batch = await generate_candidates_activity(ctx, retrieved, params.focus_area.value, True)
+        batch, ledger = await generate_candidates_activity(
+            ctx, retrieved, params.focus_area.value, True, ledger=ledger
+        )
 
         self.current_step = "score"
         self.progress_percent = 55.0
@@ -135,15 +138,21 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         self.current_step = "verify"
         self.progress_percent = 70.0
         top_3_scored = scored.scored[:3]
-        verified = await verify_top_candidates_activity(top_3_scored, ctx, params.company_name)
+        verified, ledger = await verify_top_candidates_activity(
+            top_3_scored, ctx, params.company_name, ledger=ledger
+        )
 
         self.current_step = "enrich"
         self.progress_percent = 80.0
-        enriched_uses, rejected = await select_and_enrich_activity(scored, verified, ctx)
+        enriched_uses, rejected = await select_and_enrich_activity(
+            scored, verified, ctx, retrieved=retrieved, ledger=ledger
+        )
 
         self.current_step = "meta_evaluate"
         self.progress_percent = 88.0
-        review, fact_claims = await meta_evaluate_activity(enriched_uses, rejected, ctx)
+        review, fact_claims = await meta_evaluate_activity(
+            enriched_uses, rejected, ctx, retrieved=retrieved, ledger=ledger
+        )
 
         self.current_step = "quality_signals"
         self.progress_percent = 93.0
