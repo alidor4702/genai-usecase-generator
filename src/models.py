@@ -279,6 +279,65 @@ class ResearchBundle(BaseModel):
 
 
 # ----------------------------------------------------------------------------
+# Evidence ledger — every external source the pipeline reads is recorded here
+# so downstream steps (enrichment, fact-check, meta-eval) can pin claims to
+# specific source content rather than to a flattened CompanyContext.
+# ----------------------------------------------------------------------------
+
+
+class EvidenceKind(StrEnum):
+    WIKIPEDIA = "wikipedia"
+    NEWS = "news"
+    TAVILY = "tavily"
+    PRECEDENT = "precedent"
+    JOBS = "jobs"
+    EXISTING_INITIATIVE = "existing_initiative"
+    COMPANY_VERIFICATION = "company_verification"
+    GAP_FILL = "gap_fill"
+    GENERATION_TOOL = "generation_tool"
+    PER_CANDIDATE_VERIFICATION = "per_candidate_verification"
+
+
+class EvidenceItem(BaseModel):
+    id: str  # short stable hash (e.g. "ev-a1b2c3d4ef") — used in claim citations
+    source_kind: EvidenceKind
+    url: str | None = None
+    title: str
+    content: str  # full deep-read text where available; snippet otherwise
+    fetched_at_step: str  # research | gap_fill | retrieve | generation_tool | verification
+    confidence: Literal["high", "medium", "low"] = "medium"
+
+
+class EvidenceLedger(BaseModel):
+    """Append-only ledger of every external source the pipeline read.
+
+    Threaded as typed input/output through the research → retrieve → generate
+    → verify chain. Meta-eval reads it to verify claims against source content.
+    """
+
+    entries: list[EvidenceItem] = Field(default_factory=list)
+
+    def add(self, item: EvidenceItem) -> bool:
+        """Add an entry, deduping by id. Returns True if added, False if duplicate."""
+        if any(e.id == item.id for e in self.entries):
+            return False
+        self.entries.append(item)
+        return True
+
+    def by_id(self, evidence_id: str) -> EvidenceItem | None:
+        for e in self.entries:
+            if e.id == evidence_id:
+                return e
+        return None
+
+    def ids(self) -> list[str]:
+        return [e.id for e in self.entries]
+
+    def of_kind(self, kind: EvidenceKind) -> list[EvidenceItem]:
+        return [e for e in self.entries if e.source_kind == kind]
+
+
+# ----------------------------------------------------------------------------
 # Precedent corpus
 # ----------------------------------------------------------------------------
 
@@ -324,6 +383,9 @@ class Candidate(BaseModel):
     novelty: Novelty = Novelty.ADAPTED_FROM_PRECEDENT
     inspired_by: list[str] = Field(default_factory=list)  # precedent IDs
     grounded_in: list[str] = Field(default_factory=list)  # company-context field paths
+    # EvidenceLedger entry IDs (e.g. "ev-a1b2c3d4") that the generator pulled
+    # via the web_search tool and used to anchor concrete claims.
+    evidence_ids: list[str] = Field(default_factory=list)
 
 
 class CandidateBatch(BaseModel):
@@ -413,6 +475,7 @@ class EnrichedUseCase(BaseModel):
     top_implementation_risk: str
     inspired_by: list[str] = Field(default_factory=list)
     grounded_in: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)  # carries forward from Candidate
     builds_on_existing: bool = False  # True if verifier returned partial_overlap
     builds_on_note: str | None = None
 
