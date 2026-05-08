@@ -21,6 +21,7 @@ import json
 import logging
 from datetime import timedelta
 
+import httpx
 import mistralai.workflows as workflows
 from mistralai.client import Mistral
 
@@ -60,19 +61,28 @@ initiatives, and a verified-companies-index match), produce ONE structured
 `CompanyContext` JSON object.
 
 Hard rules:
-- Use ONLY the provided signals. If a field is not supported, leave it empty
-  or "unknown" — do not fabricate.
+- Use the provided signals as the basis for every field. If a field is not
+  supported by ANY signal, output the empty value ("" or [] or "unknown").
+- IMPORTANT: a signal can be the structured Wikidata field (like `industry`)
+  OR free text inside the Wikipedia summary, news bodies, or job-posting text.
+  Read the summary text — if it says "French multinational retail and
+  wholesaling corporation", that DIRECTLY supports `classification.industry =
+  "Retail"` and `classification.geography = "France"` even if the structured
+  Wikidata fields came back empty.
+- Specifically: NEVER output "Unknown" / "unknown" / "" for a field if the
+  same information is unambiguously in the Wikipedia summary or news bodies.
+  Extract it. The strict rule is "no fabrication" — copying clearly-stated
+  facts from the summary is NOT fabrication.
 - Do NOT extract financial details (revenue, employee count, stock price,
-  founding year, executive names) — they don't drive any downstream decision.
+  founding year, executive names) — they don't drive downstream decisions.
 - `existing_ai_initiatives` MUST enumerate every distinct already-deployed
   initiative discovered. The downstream pipeline uses these as a hard gate
   against recommending what the company already does.
 - `meta.research_confidence` is a float in [0, 1] reflecting how coherently
   the signals converge. Sparse / contradictory signals → lower confidence.
-- IF PARALLEL SIGNALS CONTRADICT EACH OTHER (e.g. Wikipedia says industry X
-  but recent news suggests pivot to Y, or jobs imply different tech maturity
-  than Wikipedia), include both in the relevant fields and lower confidence
-  accordingly. Do not silently pick one.
+- IF PARALLEL SIGNALS CONTRADICT EACH OTHER (Wikipedia says industry X but
+  recent news suggests pivot to Y, etc.), include both in the relevant fields
+  and lower confidence accordingly. Do not silently pick one.
 - The verified-companies index is a confidence boost, never a gate.
 - `scale.size_tier` is one of: "startup", "scaleup", "enterprise", "unknown"
 - `scale.public_or_private` is one of: "public", "private", "unknown"
@@ -202,10 +212,25 @@ async def _synthesize_company_context(name: str, bundle: ResearchBundle) -> Comp
     return ctx
 
 
+_UNKNOWN_TOKENS = {"", "unknown", "n/a", "none", "null"}
+
+
+def _is_unknown(v: object) -> bool:
+    return isinstance(v, str) and v.strip().lower() in _UNKNOWN_TOKENS
+
+
 def _coerce_company_context(
     name: str, bundle: ResearchBundle, data: dict[str, object]
 ) -> CompanyContext:
-    """Map LLM JSON to CompanyContext, filling required fields with sensible fallbacks."""
+    """Map LLM JSON to CompanyContext, filling required fields with sensible fallbacks.
+
+    Structural fallback: if the LLM returned empty / "unknown" for a field that
+    the structured signal bundle has populated (e.g. wikipedia.industry from a
+    direct Wikidata fetch, or verified_match.country), override with the
+    structured value. This is the "trust the data over the LLM's interpretation"
+    rule — it preserves no-fabrication discipline because we're using actual
+    signals, but prevents the model from collapsing real data into "Unknown".
+    """
     identity_raw = data.get("identity", {})
     identity = CompanyIdentity(
         name=str(identity_raw.get("name", name) if isinstance(identity_raw, dict) else name),
@@ -214,10 +239,28 @@ def _coerce_company_context(
     classification_raw = (
         data.get("classification", {}) if isinstance(data.get("classification"), dict) else {}
     )
+
+    # Structural fallback: use Wikipedia/verified-match data if the LLM's value is empty/unknown
+    industry_llm = classification_raw.get("industry")
+    industry_fallback = bundle.wikipedia.industry or bundle.verified_match.industry
+    industry = (
+        str(industry_fallback)
+        if (_is_unknown(industry_llm) and industry_fallback)
+        else str(industry_llm or industry_fallback or "Unknown")
+    )
+
+    geography_llm = classification_raw.get("geography")
+    geography_fallback = bundle.wikipedia.geography or bundle.verified_match.country
+    geography = (
+        str(geography_fallback)
+        if (_is_unknown(geography_llm) and geography_fallback)
+        else (str(geography_llm) if geography_llm else geography_fallback)
+    )
+
     classification = CompanyClassification(
-        industry=str(classification_raw.get("industry", "Unknown")),
+        industry=industry,
         sub_industries=list(classification_raw.get("sub_industries") or []),
-        geography=classification_raw.get("geography"),
+        geography=geography,
         operating_regions=list(classification_raw.get("operating_regions") or []),
     )
     scale_raw = data.get("scale", {}) if isinstance(data.get("scale"), dict) else {}
@@ -311,3 +354,157 @@ async def research_company_activity(
         ctx.meta.research_sources,
     )
     return ctx
+
+
+# ---------------------------------------------------------------------------
+# Context-completion agent — runs after initial research, identifies fields
+# that came back empty/unknown despite mattering for downstream generation,
+# runs targeted Tavily searches, then re-synthesizes with augmented signals.
+# ---------------------------------------------------------------------------
+
+
+def _identify_gaps(ctx: CompanyContext) -> list[tuple[str, str]]:
+    """Return list of (field_label, search_query) for missing fields that matter."""
+    gaps: list[tuple[str, str]] = []
+    name = ctx.identity.name
+
+    if _is_unknown(ctx.classification.industry):
+        gaps.append(("industry", f"{name} company industry sector business"))
+    if not ctx.classification.geography or _is_unknown(ctx.classification.geography):
+        gaps.append(("geography", f"{name} company headquarters country where based"))
+    if not ctx.business.business_model or _is_unknown(ctx.business.business_model):
+        gaps.append(("business_model", f"{name} business model how it makes money"))
+    if not ctx.business.key_products_or_services:
+        gaps.append(("products", f"{name} main products and services offered"))
+    if not ctx.data_and_tech.likely_data_assets:
+        gaps.append(("data_assets", f"{name} data assets technology stack platforms"))
+    if not ctx.strategic_context.stated_priorities:
+        gaps.append(("priorities", f"{name} strategic priorities goals announcements 2024 2025"))
+    return gaps
+
+
+async def _run_targeted_search(
+    tavily_client: object, http_client: httpx.AsyncClient, query: str
+) -> str:
+    """Run one Tavily search, deep-read top 1 result, return aggregated text."""
+    from tavily import AsyncTavilyClient as _TavilyType  # noqa: F401  (type assist only)
+
+    try:
+        resp = await tavily_client.search(  # type: ignore[attr-defined]
+            query=query, search_depth="advanced", max_results=2
+        )
+    except Exception as e:
+        logger.warning("completion search failed: %s", type(e).__name__)
+        return ""
+    if not isinstance(resp, dict):
+        return ""
+    parts: list[str] = []
+    results = resp.get("results", [])
+    for i, r in enumerate(results[:2]):
+        title = str(r.get("title") or "")
+        snippet = str(r.get("content") or "")[:1500]
+        parts.append(f"- {title}: {snippet}")
+        # Deep-read only the top result to keep cost down
+        if i == 0:
+            url = str(r.get("url") or "")
+            if url:
+                from scripts._fetch import extract_main_text, fetch_html
+
+                html = await fetch_html(http_client, url, timeout_s=10.0)
+                if html:
+                    body = extract_main_text(html, max_chars=3000)
+                    if body:
+                        parts.append(f"  DEEP-READ {url}:\n  {body}")
+    return "\n".join(parts)
+
+
+async def _resynthesize_with_extra_signals(
+    name: str, bundle: ResearchBundle, extra_signal_block: str
+) -> CompanyContext:
+    """Re-run the synthesis call with the extra signal block appended."""
+    if not settings.mistral_api_key:
+        raise RuntimeError("MISTRAL_API_KEY required for re-synthesis")
+    client = Mistral(api_key=settings.mistral_api_key)
+    user = (
+        _build_synthesis_prompt(name, bundle)
+        + "\n\n## Additional targeted research (gap-filling pass)\n"
+        + extra_signal_block
+        + "\n\nNow produce the final CompanyContext using ALL signals above, "
+        "including the gap-filling block."
+    )
+    r = await client.chat.complete_async(
+        model=settings.mistral_research_model,
+        temperature=0.2,
+        max_tokens=4000,
+        timeout_ms=120_000,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": SYNTHESIS_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+    )
+    text = r.choices[0].message.content
+    if isinstance(text, list):
+        text = "".join(getattr(b, "text", "") for b in text)
+    data = json.loads(_strip_fence(str(text or "")))
+    return _coerce_company_context(name, bundle, data)
+
+
+@workflows.activity(start_to_close_timeout=timedelta(seconds=180))
+async def enrich_company_context_activity(
+    ctx: CompanyContext, bundle: ResearchBundle | None = None
+) -> CompanyContext:
+    """Adaptive research pass: identify Unknown/empty fields and fill them.
+
+    For each gap, run a targeted Tavily search and add the results to the
+    synthesis context. Then re-synthesize the CompanyContext.
+
+    Skips silently if there are no gaps OR if Tavily isn't configured.
+    """
+    gaps = _identify_gaps(ctx)
+    if not gaps:
+        logger.info("enrich_context: no gaps detected, skipping")
+        return ctx
+    if not settings.tavily_api_key:
+        logger.info("enrich_context: TAVILY_API_KEY missing, skipping (gaps=%d)", len(gaps))
+        return ctx
+
+    logger.info("enrich_context: %d gaps to fill: %s", len(gaps), [g[0] for g in gaps])
+
+    # Run a fresh research bundle to pass to re-synthesis (cached, so cheap)
+    if bundle is None:
+        bundle = await _gather_research_bundle(ctx.identity.name, ResearchDepth.LOW)
+
+    from tavily import AsyncTavilyClient
+
+    tavily = AsyncTavilyClient(api_key=settings.tavily_api_key)
+    sem = asyncio.Semaphore(3)
+
+    async def _one(label: str, query: str) -> tuple[str, str]:
+        async with sem:
+            async with httpx.AsyncClient(headers={"User-Agent": settings.user_agent}) as http:
+                txt = await _run_targeted_search(tavily, http, query)
+                return label, txt
+
+    results = await asyncio.gather(*(_one(label, q) for label, q in gaps))
+    extra_block_lines: list[str] = []
+    for label, txt in results:
+        if not txt:
+            continue
+        extra_block_lines.append(f"### Gap fill: {label}\n{txt}")
+    if not extra_block_lines:
+        logger.info("enrich_context: targeted searches returned nothing, returning original ctx")
+        return ctx
+
+    extra_signal_block = "\n\n".join(extra_block_lines)
+    enriched = await _resynthesize_with_extra_signals(ctx.identity.name, bundle, extra_signal_block)
+    enriched.meta.research_sources = list(
+        set(enriched.meta.research_sources + ["completion_agent"])
+    )
+    logger.info(
+        "enrich_context: re-synthesized | confidence=%.2f | industry=%s | filled=%s",
+        enriched.meta.research_confidence,
+        enriched.classification.industry,
+        [g[0] for g in gaps],
+    )
+    return enriched

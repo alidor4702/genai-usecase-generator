@@ -31,10 +31,19 @@ MAX_RETRIES_PER_PAGE = 3
 INTER_PAGE_DELAY_SECONDS = 1.0
 
 
-def _sparql_query(limit: int, offset: int) -> str:
+def _sparql_query(limit: int, offset: int, root_class: str) -> str:
+    """Direct instance-of query (no transitive subclass) — keeps the query
+    cheap enough for Wikidata's SPARQL endpoint to serve without 502s.
+
+    The transitive `wdt:P31/wdt:P279*` variant catches more entities but blows
+    past the endpoint's compute limits on large root classes like Q4830453.
+    Trade-off accepted: smaller-but-served index over a broader-but-failing
+    query. The runtime Wikipedia/Tavily fallbacks (Fix 4 + Fix 5) cover the
+    long tail of companies not in this index.
+    """
     return f"""\
 SELECT DISTINCT ?company ?companyLabel ?industryLabel ?countryLabel WHERE {{
-  ?company wdt:P31 wd:Q783794 .
+  ?company wdt:P31 wd:{root_class} .
   ?wp schema:about ?company ;
       schema:isPartOf <https://en.wikipedia.org/> .
   OPTIONAL {{ ?company wdt:P452 ?industry . }}
@@ -44,6 +53,12 @@ SELECT DISTINCT ?company ?companyLabel ?industryLabel ?countryLabel WHERE {{
 ORDER BY ?company
 LIMIT {limit} OFFSET {offset}
 """
+
+
+# Direct-instance-of root classes. Q4830453 = business, Q783794 = company,
+# Q161726 = multinational corporation, Q1525627 = corporation. UPSERT collapses
+# overlap on Q-id PRIMARY KEY so multi-pass writes don't double count.
+ROOT_CLASSES = ("Q783794", "Q4830453", "Q161726", "Q1525627")
 
 
 def _parse_bindings(json_payload: dict[str, Any]) -> list[dict[str, str | None]]:
@@ -69,9 +84,9 @@ def _parse_bindings(json_payload: dict[str, Any]) -> list[dict[str, str | None]]
 
 
 async def _fetch_page(
-    client: httpx.AsyncClient, limit: int, offset: int
+    client: httpx.AsyncClient, limit: int, offset: int, root_class: str = "Q783794"
 ) -> list[dict[str, str | None]]:
-    query = _sparql_query(limit, offset)
+    query = _sparql_query(limit, offset, root_class)
     last_err: Exception | None = None
     for attempt in range(1, MAX_RETRIES_PER_PAGE + 1):
         try:
@@ -107,28 +122,39 @@ async def _fetch_page(
 
 
 async def run(limit: int = 100_000) -> int:
-    """Pull up to `limit` company entities. Returns the number written."""
+    """Pull up to `limit` entities per root class. Walks each root class
+    (Q4830453 business, Q783794 company) with transitive subclass paths.
+    Returns the cumulative number of rows written across both passes.
+
+    UPSERT semantics: same Wikidata Q-id collapses on PRIMARY KEY, so
+    overlap between root classes doesn't double-count rows.
+    """
     await ensure_schema()
     written_total = 0
-    offset = 0
     async with httpx.AsyncClient() as client:
-        while offset < limit:
-            page_size = min(PAGE_SIZE, limit - offset)
-            rows = await _fetch_page(client, page_size, offset)
-            if not rows:
-                logger.info("wikidata: empty page at offset=%d, stopping", offset)
-                break
-            written = await upsert_companies(rows)
-            written_total += written
-            logger.info(
-                "wikidata: offset=%d page=%d (cumulative=%d)",
-                offset,
-                len(rows),
-                written_total,
-            )
-            offset += page_size
-            await asyncio.sleep(INTER_PAGE_DELAY_SECONDS)
-    logger.info("wikidata: done, wrote %d companies", written_total)
+        for root_class in ROOT_CLASSES:
+            offset = 0
+            class_written = 0
+            while offset < limit:
+                page_size = min(PAGE_SIZE, limit - offset)
+                rows = await _fetch_page(client, page_size, offset, root_class)
+                if not rows:
+                    logger.info("wikidata: %s empty at offset=%d, moving on", root_class, offset)
+                    break
+                written = await upsert_companies(rows)
+                class_written += written
+                written_total += written
+                logger.info(
+                    "wikidata: root=%s offset=%d page=%d (class=%d, total=%d)",
+                    root_class,
+                    offset,
+                    len(rows),
+                    class_written,
+                    written_total,
+                )
+                offset += page_size
+                await asyncio.sleep(INTER_PAGE_DELAY_SECONDS)
+    logger.info("wikidata: done, wrote %d row-upserts across all root classes", written_total)
     return written_total
 
 

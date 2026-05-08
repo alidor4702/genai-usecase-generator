@@ -33,6 +33,19 @@ from src.models import (
 logger = logging.getLogger(__name__)
 
 
+def _clean_mermaid(s: str) -> str:
+    """Strip leading ```mermaid / ``` and trailing ``` so the renderer can
+    wrap the body without producing a double-fenced code block."""
+    s = (s or "").strip()
+    for prefix in ("```mermaid", "```Mermaid", "```"):
+        if s.startswith(prefix):
+            s = s[len(prefix) :].lstrip("\n").lstrip()
+            break
+    if s.endswith("```"):
+        s = s[:-3].rstrip()
+    return s.strip()
+
+
 def _impact_badge_variant(uc: EnrichedUseCase) -> str:
     return {"high": "success", "medium": "default", "low": "secondary"}.get(
         uc.impact_tier.value, "default"
@@ -75,8 +88,9 @@ def _format_use_case_md(uc: EnrichedUseCase, specificity: float | None) -> str:
         parts.append("**Grounded in:** " + ", ".join(uc.grounded_in))
     if specificity is not None:
         parts.append(f"_Specificity score: {specificity:.2f}_")
-    if uc.blueprint_mermaid:
-        parts.append("\n**Architecture blueprint:**\n```mermaid\n" + uc.blueprint_mermaid + "\n```")
+    cleaned_mermaid = _clean_mermaid(uc.blueprint_mermaid)
+    if cleaned_mermaid:
+        parts.append("\n**Architecture blueprint:**\n```mermaid\n" + cleaned_mermaid + "\n```")
     return "\n".join(parts)
 
 

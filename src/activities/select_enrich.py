@@ -47,6 +47,18 @@ def _strip_fence(s: str) -> str:
     return s.strip()
 
 
+def _coerce_str_list(v: object) -> list[str]:
+    """Robust coercion to list[str]. Handles the common LLM mistake of
+    returning a single string for a field declared as list[str]."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return [v] if v.strip() else []
+    if isinstance(v, list):
+        return [str(x) for x in v if x]
+    return []
+
+
 def filter_and_promote(
     scored: ScoredBatch, verified: VerificationBatch, k: int = 3
 ) -> tuple[list[ScoredCandidate], list[ScoredCandidate], dict[str, VerificationVerdict]]:
@@ -181,8 +193,9 @@ def _coerce_enriched(
         why_this_company=str(raw.get("why_this_company", scored.candidate.why_this_company)),
         example_input=str(raw.get("example_input", "")),
         example_output=str(raw.get("example_output", "")),
-        suggested_mistral_products=list(
-            raw.get("suggested_mistral_products") or scored.candidate.suggested_mistral_products
+        suggested_mistral_products=(
+            _coerce_str_list(raw.get("suggested_mistral_products"))
+            or scored.candidate.suggested_mistral_products
         ),
         blueprint_pattern=bp,
         blueprint_mermaid=str(raw.get("blueprint_mermaid", "")),
@@ -191,8 +204,8 @@ def _coerce_enriched(
         impact_tier=impact,
         complexity_tier=complexity,
         top_implementation_risk=str(raw.get("top_implementation_risk", "")),
-        inspired_by=list(raw.get("inspired_by") or scored.candidate.inspired_by),
-        grounded_in=list(raw.get("grounded_in") or scored.candidate.grounded_in),
+        inspired_by=_coerce_str_list(raw.get("inspired_by")) or scored.candidate.inspired_by,
+        grounded_in=_coerce_str_list(raw.get("grounded_in")) or scored.candidate.grounded_in,
         builds_on_existing=builds_on,
         builds_on_note=(
             "Builds on an existing initiative at this company (partial overlap detected by verifier)."

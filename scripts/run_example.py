@@ -26,7 +26,10 @@ from pathlib import Path
 from src.activities.compute_signals import compute_quality_signals_activity
 from src.activities.generate import generate_candidates_activity
 from src.activities.meta_evaluate import meta_evaluate_activity
-from src.activities.research import research_company_activity
+from src.activities.research import (
+    enrich_company_context_activity,
+    research_company_activity,
+)
 from src.activities.retrieve import retrieve_precedents_activity
 from src.activities.score import score_candidates_activity
 from src.activities.select_enrich import select_and_enrich_activity
@@ -71,10 +74,21 @@ async def run_pipeline(params: WorkflowInput, write_md: Path | None) -> int:
     log.info("=== Step 1: Research ===")
     ctx = await research_company_activity(params.company_name, params.research_depth)
     log.info(
-        "research_confidence=%.2f | is_verified=%s | sources=%s",
+        "research_confidence=%.2f | is_verified=%s | industry=%s | sources=%s",
         ctx.meta.research_confidence,
         ctx.meta.is_verified,
+        ctx.classification.industry,
         ctx.meta.research_sources,
+    )
+
+    log.info("=== Step 1b: Context completion (gap-fill) ===")
+    ctx = await enrich_company_context_activity(ctx)
+    log.info(
+        "after enrich: confidence=%.2f | industry=%s | priorities=%d | data_assets=%d",
+        ctx.meta.research_confidence,
+        ctx.classification.industry,
+        len(ctx.strategic_context.stated_priorities),
+        len(ctx.data_and_tech.likely_data_assets),
     )
 
     confidence_ok = (

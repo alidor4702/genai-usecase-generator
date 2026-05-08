@@ -34,7 +34,10 @@ import mistralai.workflows.plugins.mistralai as workflows_mistralai
 from src.activities.compute_signals import compute_quality_signals_activity
 from src.activities.generate import generate_candidates_activity
 from src.activities.meta_evaluate import meta_evaluate_activity
-from src.activities.research import research_company_activity
+from src.activities.research import (
+    enrich_company_context_activity,
+    research_company_activity,
+)
 from src.activities.retrieve import retrieve_precedents_activity
 from src.activities.score import score_candidates_activity
 from src.activities.select_enrich import select_and_enrich_activity
@@ -103,7 +106,11 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
 
         ctx = await research_company_activity(params.company_name, params.research_depth)
 
-        # Confidence gate
+        self.current_step = "enrich_context"
+        self.progress_percent = 12.0
+        ctx = await enrich_company_context_activity(ctx)
+
+        # Confidence gate (after the context-completion pass)
         confidence_ok = (
             ctx.meta.research_confidence >= settings.research_confidence_threshold
             or ctx.meta.is_verified
