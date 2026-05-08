@@ -31,19 +31,36 @@ from datetime import timedelta
 
 import mistralai.workflows as workflows
 import mistralai.workflows.plugins.mistralai as workflows_mistralai
+import temporalio.workflow as _temporal_workflow
 
-from src.activities.compute_signals import compute_quality_signals_activity
-from src.activities.generate import generate_candidates_activity
-from src.activities.meta_evaluate import meta_evaluate_activity
-from src.activities.research import (
-    enrich_company_context_activity,
-    research_company_activity,
-)
-from src.activities.retrieve import retrieve_precedents_activity
-from src.activities.score import score_candidates_activity
-from src.activities.select_enrich import select_and_enrich_activity
-from src.activities.verify_per_candidate import verify_top_candidates_activity
-from src.config import settings
+# Mistral Workflows uses Temporal under the hood. Temporal's workflow sandbox
+# loads workflow.py inside a restricted namespace at definition time and
+# blocks any module touching non-deterministic stuff (urllib.request, socket,
+# datetime.now, etc.). Our activity modules transitively import httpx →
+# urllib.request, which triggers the block.
+#
+# Standard fix: wrap activity-module imports in
+# `temporalio.workflow.unsafe.imports_passed_through()` so the sandbox
+# treats them as trusted. The activity functions are still safe to reference
+# from the workflow class — they only execute side effects when the runtime
+# invokes them on the activity executor (outside the sandbox), not when the
+# workflow class is loaded.
+with _temporal_workflow.unsafe.imports_passed_through():
+    from src.activities.compute_signals import compute_quality_signals_activity
+    from src.activities.generate import generate_candidates_activity
+    from src.activities.meta_evaluate import meta_evaluate_activity
+    from src.activities.research import (
+        enrich_company_context_activity,
+        research_company_activity,
+    )
+    from src.activities.retrieve import retrieve_precedents_activity
+    from src.activities.score import score_candidates_activity
+    from src.activities.select_enrich import select_and_enrich_activity
+    from src.activities.verify_per_candidate import verify_top_candidates_activity
+    from src.config import settings
+    from src.ui.render import render_report_to_components, render_report_to_markdown
+
+# Pure typed-models module — no I/O, safe at definition time
 from src.models import (
     CriteriaWeights,
     FocusArea,
@@ -51,7 +68,6 @@ from src.models import (
     WorkflowInput,
     WorkflowStatus,
 )
-from src.ui.render import render_report_to_components, render_report_to_markdown
 
 logger = logging.getLogger(__name__)
 
