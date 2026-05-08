@@ -401,18 +401,38 @@ intermediate markers and opaque IDs that you need to clean up.
 
 Transformations to apply, IN ORDER:
 
-1. UNANCHORED NUMBER MARKERS — every `[unanchored: X]` marker indicates a
-   number our system couldn't verify against any cited source. REPLACE the
-   marker (and any leading "by", "of", "around", etc.) with a qualitative
-   phrase that reads naturally:
+1. UNANCHORED NUMBER MARKERS + ANY OTHER QUANTITATIVE COMPANY CLAIM —
+   the regex-based numeric scrubber wraps obvious patterns ($, %, M/B,
+   weeks, x-multipliers) as `[unanchored: X]`, but it doesn't catch
+   every unit (PB, TB, store counts, customer counts, country counts,
+   employee counts, dataset sizes in any unit). YOUR JOB is broader:
+   for ANY specific quantitative claim about THIS company's internals
+   that is NOT explicitly anchored to a cited source in the same
+   sentence, replace the specific number with qualitative language.
+
+   Examples — note the rule applies REGARDLESS of unit:
      - "reduces audit time by [unanchored: 30%]" → "reduces audit time
        materially"
      - "[unanchored: 8-15%] reduction" → "a meaningful reduction"
      - "$[unanchored: 4M] in fines" → "significant compliance fines"
-     - "[unanchored: 5x] throughput" → "a meaningful multiplier on throughput"
-   The qualitative phrase must fit the sentence grammatically — rewrite the
-   whole clause if needed. NEVER leave any `[unanchored: ...]` marker in the
-   final output.
+     - "L'Oréal's 10 PB data platform" → "L'Oréal's large-scale data
+       platform" (unit was PB; regex missed it; same rule applies)
+     - "operates 13,000 stores across 40 countries" → "operates a global
+       store network across many countries" (counts of stores and
+       countries are claims about company scale; unanchored unless cited)
+     - "5M corporate clients" → "millions of corporate clients" (M was
+       caught by regex but the same rule covers any unit)
+     - "$500B+ portfolio" → "a substantial portfolio"
+     - "1.5B+ active devices" → "a billion-scale active device base"
+       (acceptable softening; specific 1.5 figure dropped)
+
+   When a specific number IS supported by a cited source in the same
+   sentence (precedent reference, markdown link to a ledger URL),
+   KEEP IT. The rule is not "drop all numbers" — it's "drop any
+   number that doesn't have a citation right next to it."
+
+   The qualitative phrase must fit the sentence grammatically. NEVER
+   leave any `[unanchored: ...]` marker in the final output.
 
 2. OPAQUE LEDGER IDS — every `(ev-XXXXXXXXXX)` reference is an internal ID
    that must become a markdown link. The mapping {evidence_id → {title, url}}
@@ -769,10 +789,38 @@ _SINGLE_REENRICH_SYSTEM = """\
 You are re-enriching ONE GenAI use case after the meta-evaluator flagged a
 weakness in the previous version. You are given the candidate to enrich,
 the target company context, and the rationale for why the previous output
-was rejected. Produce a SINGLE `EnrichedUseCase` JSON object addressing the
-weakness — apply the same fabrication discipline rules as the main
+was rejected. Produce a SINGLE `EnrichedUseCase` JSON object addressing
+the weakness, applying the same fabrication-discipline rules as the main
 enrichment prompt (markdown links for cited evidence, qualitative language
-for unanchorable numbers).
+for unanchored numbers, illustrative-only example_output with synthetic
+IDs / "(illustrative)" annotations).
+
+OUTPUT REQUIREMENTS — every field below is mandatory. Empty strings or
+missing fields will fail downstream parsing and cause the regen to be
+discarded. Do NOT skip any field.
+
+  id                          — same id as the input candidate
+  title                       — refined; rewrite if it helps clarity
+  description                 — 150-300 words, anchored
+  why_this_company            — 100-200 words, company-specific
+  example_input               — plausible literal user query (not corp-speak)
+  example_output              — illustrative system response. MUST include
+                                a top-level "_note" or "_disclaimer" flagging
+                                synthetic data, OR (illustrative) annotations
+                                on every specific number, OR clearly-synthetic
+                                IDs (TX-SAMPLE-12345 / Site-X)
+  suggested_mistral_products  — list of 2-5 Mistral product names
+  blueprint_pattern           — one of: rag | agent_with_tools |
+                                document_ai_pipeline | fine_tuned_domain |
+                                hybrid_retrieval
+  blueprint_mermaid           — 5-10 node mermaid flowchart
+  time_to_value               — {"estimate": "X-Y weeks" or "unknown",
+                                  "anchored_to": [precedent_ids]}
+  operating_cost_tier         — low | medium | high | unknown
+  top_implementation_risk     — one specific named risk (not generic)
+  inspired_by                 — precedent IDs (carry from candidate)
+  grounded_in                 — context paths (carry from candidate)
+  evidence_ids                — ledger IDs (carry from candidate)
 
 Output STRICT JSON: a single EnrichedUseCase object (NOT wrapped in a list).
 """
@@ -844,6 +892,25 @@ async def regen_one_use_case_activity(
     enriched_one = _coerce_enriched(
         data, replacement, VerificationVerdict.PASS, valid_corpus_ids
     )
+
+    # Reject regen output if any customer-facing field is empty/too thin —
+    # the model occasionally drops fields under the regen prompt; better to
+    # keep the original use case than ship one with empty example_output.
+    critical_fields = {
+        "description": enriched_one.description,
+        "why_this_company": enriched_one.why_this_company,
+        "example_input": enriched_one.example_input,
+        "example_output": enriched_one.example_output,
+        "top_implementation_risk": enriched_one.top_implementation_risk,
+    }
+    too_thin = [name for name, val in critical_fields.items() if len(val.strip()) < 20]
+    if too_thin:
+        logger.warning(
+            "regen_one: dropping incomplete output for %s (thin fields: %s)",
+            replacement.candidate.id,
+            too_thin,
+        )
+        return None
 
     # Apply the same post-process passes as the main enrichment path
     precedent_lookup: dict[str, str] = (
