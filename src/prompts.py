@@ -250,6 +250,26 @@ For each use case, produce:
   enterprise stack." Good: "Find every contract with a non-standard
   termination clause from the last 12 months." `example_output` must be a
   literal sample of what the system returns, formatted as the user would see it.
+
+  **CRITICAL — example_output is hypothetical/illustrative.** Customers
+  reading the report must immediately understand that the numbers, IDs,
+  names, and percentages inside `example_output` are SYNTHETIC SAMPLE
+  DATA, not factual claims about the company. Apply at least one of:
+    - Begin the JSON or text body with a `"_note": "Illustrative output
+      with synthetic sample data"` field at the top level.
+    - Use clearly synthetic identifier patterns: `TX-SAMPLE-12345`,
+      `CASE-EXAMPLE-001`, `Customer-A`, `Site-X` — not real-looking
+      identifiers like `LOR-2023-045` or `KRS:0000123456`.
+    - Annotate specific numbers with `(illustrative)` or `(sample)`,
+      e.g. `"reduction_pct": "12% (illustrative)"`.
+    - Or include a top-level `"_disclaimer": "Synthetic example for
+      demonstration; not a factual claim about <Company>."`
+  DO NOT invent realistic-looking specific facts that could be mistaken
+  for real claims — fabricated study IDs (`LOR-DERM-112`), fabricated
+  emissions figures (`850K tCO2e`), fabricated regulatory paragraph
+  references (`ECB/2025/34, Paragraph 45`), fabricated transaction IDs
+  with real-looking format. If you need a number to make the example
+  legible, mark it illustrative.
 - `blueprint_pattern`: one of {rag, agent_with_tools, document_ai_pipeline,
   fine_tuned_domain, hybrid_retrieval}
 - `blueprint_mermaid`: a small mermaid sketch (one architecture flow, not a
