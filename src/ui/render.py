@@ -111,7 +111,10 @@ def _summarize_ttv_spread(spreads: list[str]) -> str:
 
 def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> str:
     lines: list[str] = ["---", "## Report quality signals", ""]
-    lines.append(f"- **Diversity** (avg pairwise cosine distance): `{signals.diversity:.2f}`")
+    lines.append(
+        f"- **Topical diversity** (LLM-graded over titles + blueprint patterns): "
+        f"`{signals.diversity:.2f}`"
+    )
     lines.append(
         "- **Specificity** per use case: "
         + ", ".join(f"`{s:.2f}`" for s in signals.specificity_per_use_case)
