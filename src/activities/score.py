@@ -22,6 +22,7 @@ from mistralai.client import Mistral
 
 from src.config import settings
 from src.criteria import render_criteria_for_prompt
+from src.trace import trace_step
 from src.models import (
     Candidate,
     CandidateBatch,
@@ -82,21 +83,28 @@ async def _score_pass(
     client: Mistral, user_msg: str, temperature: float
 ) -> dict[str, dict[str, dict[str, object]]]:
     """Return mapping candidate_id -> criterion_key -> {score: int, rationale: str}."""
-    r = await client.chat.complete_async(
-        model=settings.mistral_scoring_model,
-        temperature=temperature,
-        max_tokens=8000,
-        timeout_ms=180_000,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SCORING_SYSTEM},
-            {"role": "user", "content": user_msg},
-        ],
-    )
-    text = r.choices[0].message.content
-    if isinstance(text, list):
-        text = "".join(getattr(b, "text", "") for b in text)
-    data = json.loads(_strip_fence(str(text or "")))
+    async with trace_step(
+        "score",
+        settings.mistral_scoring_model,
+        "chat.complete",
+        inputs_summary=f"self-consistency pass T={temperature}",
+    ) as ev:
+        r = await client.chat.complete_async(
+            model=settings.mistral_scoring_model,
+            temperature=temperature,
+            max_tokens=10_000,
+            timeout_ms=180_000,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": SCORING_SYSTEM},
+                {"role": "user", "content": user_msg},
+            ],
+        )
+        text = r.choices[0].message.content
+        if isinstance(text, list):
+            text = "".join(getattr(b, "text", "") for b in text)
+        data = json.loads(_strip_fence(str(text or "")))
+        ev.outputs_summary = f"scored {len(data.get('scored', []))} candidates"
     scored_list = data.get("scored", [])
 
     out: dict[str, dict[str, dict[str, object]]] = {}
