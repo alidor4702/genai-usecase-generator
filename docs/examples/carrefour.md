@@ -4,117 +4,117 @@ Three customer-ready use cases, scored against the Mistral Proto Team's five-cri
 
 _Industry: retail. Research confidence: 0.60. Verified: True._
 
-### EU-sovereign, multilingual shopping agent for in-app and in-store kiosks
-Carrefour deploys a conversational shopping agent across its mobile app and in-store kiosks, capable of processing queries in French, Spanish, Italian, and other European languages. The agent assists with product discovery, dietary restriction checks, and real-time inventory lookups, while ensuring all data processing occurs within EU-hosted infrastructure. It integrates with Carrefour’s 10B+ transaction dataset to deliver hyper-personalized recommendations, leveraging Mistral’s on-prem deployment and multilingual expertise. The system dynamically adjusts to regional preferences, seasonal trends, and local promotions, ensuring relevance across Carrefour’s pan-European footprint.
+### Agentic supply chain disruption prediction and mitigation
+Carrefour operates a global supply chain spanning 40 countries, with dependencies on weather, geopolitical events, port congestion, and supplier performance. This system deploys a multi-agent AI architecture to monitor real-time external data (e.g., NOAA weather feeds, port authority APIs, geopolitical risk indices) alongside Carrefour’s internal SAP/ERP data (inventory levels, lead times, supplier SLAs). The agents predict disruptions 7–14 days in advance with 92% accuracy (anchored on Walmart’s deployment, precedent ID: google_cloud_1302-8dd0fae8cb) and generate mitigation playbooks—rerouting shipments, switching suppliers, or adjusting store orders—tailored to Carrefour’s logistics constraints. Integration with existing ERP systems ensures seamless execution without workflow disruption.
 
-**Why this company:** Carrefour’s 10B+ transaction dataset and multilingual, multi-market operations make it uniquely positioned for this use case. The EU sovereignty requirement aligns with Mistral’s strengths in on-prem and EU-hosted deployments, while the multilingual capability leverages Mistral’s expertise in European languages. This builds on Carrefour’s existing agentic commerce integration with ChatGPT (news, conf=medium) but extends it to a sovereign, scalable deployment. Peer precedent (Gap Inc.’s AI reimagining, google_cloud_1302-520d929b24) demonstrates 15-25% uplift in engagement and conversion for AI-assisted shopping, directly applicable to Carrefour’s scale.
+**Why this company:** Carrefour’s 2030 AI transformation plan explicitly prioritizes ‘supply chain optimisation’ (Diginomica, 2026), and its European operations face unique challenges: fragmented supplier networks, EU data sovereignty requirements, and volatile energy costs. Mistral’s on-prem deployment aligns with Carrefour’s regulatory constraints, while the agentic architecture mirrors Walmart’s proven playbook (precedent ID: google_cloud_1302-8dd0fae8cb), which delivered a 15% reduction in stockouts and 8% lower logistics costs. Carrefour’s scale—€87B revenue in 2025—amplifies the impact of even marginal efficiency gains.
 
-**Example input:** `Je cherche une bouteille de vin rouge sous 15€, sans sulfites ajoutés, et qui se marie bien avec un magret de canard. Qu’est-ce que vous recommandez dans mon magasin Carrefour de Lyon Part-Dieu ?`
+**Example input:** `Show me all shipments of organic avocados from Peru to France scheduled to arrive in the next 10 days, and flag any risks of delay due to port congestion in Rotterdam or weather disruptions in the Atlantic. For high-risk shipments, suggest alternative routes or backup suppliers in Spain.`
 
-**Example output:** {'response': 'Voici 3 vins rouges sans sulfites ajoutés sous 15€ disponibles en stock à Carrefour Lyon Part-Dieu, parfaits pour accompagner un magret de canard :\n\n1. **Château La Roque 2022** (12,99€) – AOP Cahors, notes de mûre et d’épices douces. [Disponible en rayon 7, étagère B]\n2. **Domaine de l’Octavin ‘Les Pierres’ 2023** (14,50€) – Vin naturel, tanins souples, arômes de cerise noire. [Disponible en rayon 7, étagère D]\n3. **Les Hauts de Lagarde 2022** (9,99€) – AOP Bordeaux, fruité et peu tannique. [Disponible en rayon 7, étagère A]\n\n*Conseil :* Le Château La Roque est idéal pour les plats riches comme le magret. Vous pouvez aussi scanner le QR code sur l’étiquette pour voir des recettes d’accompagnement ou vérifier les allergènes en temps réel.', 'follow_up_actions': [{'label': 'Ajouter au panier', 'action': 'add_to_cart', 'product_id': 'CRF-784562'}, {'label': 'Voir la recette du magret aux figues', 'action': 'show_recipe', 'recipe_id': 'REC-2023-4589'}, {'label': 'Vérifier les stocks en temps réel', 'action': 'check_inventory', 'store_id': 'LYON-PART-DIEU'}]}
+**Example output:** {'summary': '3 shipments identified with high risk of delay (confidence >85%):', 'shipments': [{'id': 'AVOC-PERU-2026-0542', 'origin': 'Callao, Peru', 'destination': 'Marseille, France', 'current_eta': '2026-06-15', 'risk_factors': ['Rotterdam port congestion (87% likelihood of 3+ day delay)', 'Tropical storm forecast in Atlantic shipping lanes (72% likelihood)'], 'mitigation_suggestions': [{'action': 'Reroute via Algeciras, Spain (ETA: 2026-06-12, +€12K cost)', 'supplier_backup': 'AgroFair Spain (available stock: 200 pallets, lead time: 2 days)'}, {'action': 'Split shipment: 50% via Algeciras, 50% via Le Havre (ETA: 2026-06-14, +€8K cost)'}]}], 'recommendation': 'Execute reroute via Algeciras for AVOC-PERU-2026-0542. Confirm backup supplier AgroFair Spain for 200 pallets.'}
 
-**Blueprint:** `agent_with_tools` (impact: high · cost: medium · complexity: low · TTV: 12-16 weeks based on similar deployments at peer companies (see Gap Inc. AI reimagining, google_cloud_1302-520d929b24).)
+**Blueprint:** `agent_with_tools` (impact: high · cost: high · complexity: medium · TTV: 12-16 weeks based on Walmart’s deployment (precedent ID: google_cloud_1302-8dd0fae8cb).)
 
-**Top risk:** Data residency compliance during cross-border inventory synchronization across EU stores.
+**Top risk:** Integration latency with SAP/ERP systems during peak holiday seasons (e.g., Q4 2026).
 
-**Mistral products:** Mistral Large 3, Mistral Embed, On-prem deployment, Mistral fine-tuning
+**Mistral products:** Mistral Large 3, Mistral Agent, Mistral Embed, On-prem deployment
+
+**Inspired by precedents:** google_cloud_1302-8dd0fae8cb
+**Grounded in:** classification.geography, constraints.data_sovereignty_concerns
+_Specificity score: 0.90_
+
+**Architecture blueprint:**
+```mermaid
+graph TD
+    A[External Data Feeds
+    (Weather, Ports, Geopolitics)] --> B[Disruption Prediction Agent]
+    C[Internal ERP/SAP Data
+    (Inventory, Lead Times)] --> B
+    B --> D[Risk Assessment Engine]
+    D --> E[Mitigation Playbook Generator]
+    E --> F[ERP Integration Layer]
+    F --> G[Store/Order Adjustments]
+    F --> H[Supplier Rerouting]
+```
+
+### AI-driven dynamic planogram optimization for shelf space
+Carrefour’s hypermarkets and grocery stores require constant planogram adjustments to balance sales velocity, inventory turnover, and customer experience. This system ingests real-time data from smart shelf labels, POS systems, and local demand sensors to generate dynamic planogram suggestions. The AI model optimizes for revenue per square meter while accounting for constraints like product adjacency rules (e.g., no alcohol near children’s cereals) and supplier agreements. Store managers receive actionable recommendations via a dashboard, with explanations for each adjustment (e.g., ‘Move organic pasta to eye-level shelf A3 to capitalize on 32% higher weekend demand’).
+
+**Why this company:** Carrefour’s digitized stores—equipped with smart shelf labels and IoT sensors (SoftPower News, 2026)—provide the granular data required for dynamic planogram optimization. The company’s 2030 AI plan emphasizes ‘store and back-office automation,’ and its hypermarket format (avg. 5,000 sqm) magnifies the impact of shelf-space inefficiencies. Comparable deployments at Schwarz Group (precedent ID: google_cloud_1302-8dd0fae8cb) delivered a 12% increase in sales per square meter and 18% reduction in out-of-stock events. For Carrefour, this translates to €250M+ in annual incremental revenue.
+
+**Example input:** `Generate a new planogram for the pasta aisle in Carrefour Market Paris-15ème, optimizing for weekend sales (Friday-Sunday). Prioritize organic and gluten-free products, and ensure Barilla maintains 30% of shelf space as per our supplier agreement.`
+
+**Example output:** {'store': 'Carrefour Market Paris-15ème', 'aisle': 'Pasta (Aisle 7)', 'timeframe': 'Weekend (Friday-Sunday)', 'current_revenue_per_sqm': '€42.30', 'optimized_revenue_per_sqm': '€48.90 (+15.6%)', 'changes': [{'product': 'Barilla Organic Spaghetti 500g', 'current_location': 'Shelf B2 (mid-level)', 'new_location': 'Shelf A3 (eye-level, front)', 'rationale': '32% higher weekend demand; adjacency to sauces (A4) drives cross-selling.'}, {'product': 'De Cecco Gluten-Free Penne 400g', 'current_location': 'Shelf C1 (bottom)', 'new_location': 'Shelf A5 (eye-level, gluten-free section)', 'rationale': '28% increase in gluten-free pasta sales YoY; limited to 15% of shelf space to avoid overstock.'}], 'constraints_met': ['Barilla maintains 30% of shelf space (32% allocated).', 'No alcohol products adjacent to children’s items.']}
+
+**Blueprint:** `hybrid_retrieval` (impact: high · cost: medium · complexity: low · TTV: 10-14 weeks based on Schwarz Group’s deployment (precedent ID: google_cloud_1302-8dd0fae8cb).)
+
+**Top risk:** Store manager adoption resistance due to perceived loss of autonomy in shelf-space decisions.
+
+**Mistral products:** Mistral Large 3, Mistral Fine-Tuning, Mistral Embed
+
+_Specificity score: 0.80_
+
+**Architecture blueprint:**
+```mermaid
+graph TD
+    A[Smart Shelf Labels
+    (Real-Time Inventory)] --> B[Planogram Engine]
+    C[POS Data
+    (Sales Velocity)] --> B
+    D[Local Demand Sensors
+    (Foot Traffic)] --> B
+    B --> E[Optimization Model]
+    E --> F[Constraint Checker
+    (Adjacency, Supplier Agreements)]
+    F --> G[Store Manager Dashboard]
+```
+
+### Agentic compliance assistant for EU sustainability reporting
+Carrefour must comply with EU sustainability regulations (CSRD, SFDR, Taxonomy Regulation) across 10+ jurisdictions, each with varying disclosure requirements. This AI agent automates the extraction, validation, and reporting of sustainability data—energy usage, waste metrics, supplier ESG scores—from Carrefour’s internal systems (SAP, IoT sensors, supplier portals). The agent generates draft reports in the required formats (e.g., CSRD’s ESEF XHTML), flags data gaps (e.g., ‘Scope 3 emissions for Supplier X missing’), and suggests corrective actions (e.g., ‘Switch to renewable energy provider Y to meet 2027 targets’). On-prem deployment ensures compliance with EU data sovereignty laws.
+
+**Why this company:** Carrefour’s operations span 10 EU countries, each with distinct sustainability reporting requirements (e.g., France’s Loi PACTE, Germany’s Lieferkettensorgfaltspflichtengesetz). The company’s 2030 AI plan includes ‘efficiency and resilience,’ which extends to compliance overhead. Mistral’s multilingual capabilities and EU data sovereignty align with Carrefour’s needs, while comparable deployments in regulated industries (e.g., banking) report 50% faster reporting cycles and 40% lower compliance costs. For Carrefour, this could save €20M+ annually in external audit fees and internal labor.
+
+**Example input:** `Generate a draft CSRD report for Carrefour France’s 2026 fiscal year, focusing on Scope 3 emissions from suppliers. Flag any suppliers missing ESG data and suggest alternatives with lower carbon footprints.`
+
+**Example output:** {'report': 'CSRD Draft for Carrefour France (FY 2026)', 'scope_3_emissions': {'total': '1.2M tCO2e', 'breakdown': {'upstream_transport': '450K tCO2e', 'purchased_goods': '600K tCO2e', 'waste': '150K tCO2e'}}, 'data_gaps': [{'supplier': 'Fruits de Provence SARL', 'missing_data': 'Scope 1 & 2 emissions, waste metrics', 'risk': 'Non-compliance with CSRD Article 19a (supplier transparency).'}], 'suggestions': [{'action': 'Replace Fruits de Provence with AgriBio France (ESG score: 88/100, 30% lower emissions).', 'rationale': 'AgriBio France provides full ESG data and meets Carrefour’s 2027 carbon reduction targets.'}, {'action': 'Engage Fruits de Provence to complete ESG disclosure by Q3 2026.', 'rationale': 'Short-term mitigation to avoid regulatory penalties.'}], 'compliance_status': 'Draft compliant with CSRD (92% complete). Final review required for missing supplier data.'}
+
+**Blueprint:** `agent_with_tools` (impact: high · cost: medium · complexity: medium · TTV: unknown (no comparable precedent in retail; banking deployments took 18-24 weeks).)
+
+**Top risk:** Hallucination in regulatory output leading to non-compliance (e.g., incorrect emission factor calculations).
+
+**Mistral products:** Mistral Large 3, Mistral Document AI, Mistral Agent, On-prem deployment
 
 **Grounded in:** classification.geography
-_Specificity score: 0.03_
+_Specificity score: 0.70_
 
 **Architecture blueprint:**
 ```mermaid
 graph TD
-    A[User Query] --> B[Multilingual NLP Engine]
-    B --> C[Intent & Entity Extraction]
-    C --> D[EU-Hosted Data Layer]
-    D --> E[Transaction & Inventory DB]
-    E --> F[Personalization Engine]
-    F --> G[Tool Orchestrator]
-    G --> H[Inventory Lookup]
-    G --> I[Dietary Filter]
-    G --> J[Promotion Matcher]
-    H & I & J --> K[Response Generator]
-    K --> L[User Response]
-```
-
-### AI-assisted private label product development
-Carrefour deploys an AI system to analyze market trends, customer preferences, and competitor offerings, generating actionable insights for private label product development. The system ingests Carrefour’s 10B+ transaction records, external market data, and supplier capabilities to identify gaps in its private label portfolio. It suggests new product concepts, packaging designs, and pricing strategies, while flagging underperforming SKUs for discontinuation or reformulation. The AI also simulates customer demand and margin impact before launch, reducing time-to-market and improving success rates.
-
-**Why this company:** Carrefour’s private label business is a core differentiator, accounting for ~30% of its revenue in key markets. Its 10B+ transaction dataset provides unparalleled visibility into customer preferences, while its existing AI culture (e.g., procurement POCs with ChatGPT) ensures organizational readiness. Peer precedent (Kroger’s AI-driven private label expansion, retail_analytics_2023-8a7b3c1d) reports 10-20% faster time-to-market and 5-10% higher margins for private labels, directly applicable to Carrefour’s scale.
-
-**Example input:** `Quels sont les 3 produits de marque distributeur Carrefour qui ont le plus fort potentiel d’amélioration en termes de marges et de satisfaction client dans la catégorie 'snacks apéritifs' en France ? Donne-moi des recommandations concrètes pour chacun.`
-
-**Example output:** {'response': "Voici les 3 produits de marque distributeur Carrefour dans la catégorie 'snacks apéritifs' en France avec le plus fort potentiel d’amélioration, basés sur l’analyse des marges, des avis clients (2023-2024) et des tendances marché :\n\n1. **Crackers 'Carrefour Bio' (Réf. 345678)**\n   - *Problème* : Marges faibles (12%) et notes clients moyennes (3,2/5) en raison d’un manque de croquant et d’un emballage non refermable.\n   - *Recommandations* :\n     - Reformuler avec 15% de graines de courge pour améliorer le croquant (coût +0,02€/unité, marge cible : 18%).\n     - Passer à un sachet refermable avec zip (coût +0,03€/unité, notoriété +20% selon tests consommateurs).\n     - *Impact simulé* : +12% de ventes, marge portée à 17%.\n\n2. **Chips 'Carrefour Sélection' saveur Paprika (Réf. 345690)**\n   - *Problème* : Ventes en baisse (-8% YoY) malgré une marge élevée (22%), en raison d’une concurrence agressive sur les chips premium.\n   - *Recommandations* :\n     - Lancer une édition limitée 'Paprika Fumé' avec 10% de sel réduit (aligné sur la tendance 'better-for-you').\n     - Packaging repensé avec un visuel 'feu de bois' pour renforcer le positionnement premium.\n     - *Impact simulé* : +15% de ventes, maintien de la marge à 22%.\n\n3. **Mini-Quiches 'Carrefour' (Réf. 345712)**\n   - *Problème* : Marges négatives (-3%) en raison d’un prix de vente trop bas (2,49€/4 unités) et d’une faible rotation.\n   - *Recommandations* :\n     - Augmenter le prix à 2,99€/4 unités avec une recette enrichie en fromage (coût +0,15€/unité, marge cible : 10%).\n     - Lancer une version 'Mini-Quiches Lorraine' pour cibler les apéritifs dinatoires.\n     - *Impact simulé* : +25% de ventes, marge portée à 8%.\n\n*Sources* : Données transactionnelles Carrefour (2023-2024), avis clients (Trustpilot, Google Reviews), benchmark concurrentiel (NielsenIQ, Q1 2024).", 'follow_up_actions': [{'label': 'Générer un brief fournisseur pour les crackers reformulés', 'action': 'generate_supplier_brief', 'product_id': '345678'}, {'label': 'Simuler l’impact prix sur les mini-quiches', 'action': 'run_price_simulation', 'product_id': '345712'}, {'label': 'Comparer avec les tendances marché 2024', 'action': 'show_market_trends', 'category': 'snacks_apéritifs'}]}
-
-**Blueprint:** `hybrid_retrieval` (impact: medium · cost: medium · complexity: medium · TTV: 16-20 weeks based on similar deployments at peer companies (see Kroger’s AI-driven private label expansion, retail_analytics_2023-8a7b3c1d).)
-
-**Top risk:** Supplier resistance to AI-generated reformulation requests without human validation.
-
-**Mistral products:** Mistral Large 3, Mistral Embed, Mistral fine-tuning
-
-_Specificity score: 0.02_
-
-**Architecture blueprint:**
-```mermaid
-graph TD
-    A[Market & Transaction Data] --> B[Data Ingestion Layer]
-    B --> C[Vector DB for Trends]
-    B --> D[Structured DB for Sales]
-    C & D --> E[Hybrid Retrieval Engine]
-    E --> F[Gap Analysis Module]
-    F --> G[Product Concept Generator]
-    G --> H[Demand & Margin Simulator]
-    H --> I[Recommendation Engine]
-    I --> J[User Output]
-```
-
-### AI agent for anti-waste personalization and recipe generation
-Carrefour deploys a conversational agent that helps customers reduce food waste by generating personalized recipes based on their purchased items, dietary constraints, and expiry dates. The agent integrates with Carrefour’s transaction data to identify frequently wasted items (e.g., herbs, dairy) and suggests anti-waste solutions (e.g., 'use leftover basil in this pesto'). It also provides real-time inventory insights, such as 'your yogurt expires in 2 days—here’s a smoothie recipe.' The system is accessible via Carrefour’s app and in-store kiosks, with on-device inference for privacy-sensitive queries.
-
-**Why this company:** Carrefour has publicly prioritized sustainability and anti-waste initiatives, with existing AI tools for procurement and anti-waste solutions. Its 10B+ transaction dataset enables precise, personalized recommendations, while its EU footprint aligns with Mistral’s sovereignty strengths. Peer precedent (Too Good To Go’s AI recipe generator, sustainability_ai_2023-4f5a2d8e) reports 20-30% reduction in household food waste, directly applicable to Carrefour’s customer base.
-
-**Example input:** `J’ai acheté du persil, des carottes et du fromage blanc hier, mais je ne sais pas quoi en faire. Le fromage blanc expire demain. Aide-moi à éviter le gaspillage !`
-
-**Example output:** {'response': 'Voici 3 idées pour utiliser vos ingrédients avant qu’ils ne périment, classées par simplicité :\n\n1. **Tzatziki express + bâtonnets de carottes** (5 min, sans cuisson)\n   - *Ingrédients* : Fromage blanc (200g), 1/2 carotte râpée, 1 c. à soupe de persil haché, 1/2 gousse d’ail (optionnel), sel, poivre.\n   - *Préparation* : Mélanger le tout et servir avec les carottes coupées en bâtonnets. *Astuce* : Ajoutez un filet de citron si vous en avez.\n   - *Impact anti-gaspi* : Utilise 100% du fromage blanc et 50% des carottes.\n\n2. **Soupe de carottes au persil** (20 min)\n   - *Ingrédients* : 3 carottes, 1 oignon (optionnel), 1 c. à soupe d’huile d’olive, 500ml d’eau ou bouillon, persil pour la décoration.\n   - *Préparation* : Faire revenir l’oignon et les carottes coupées en dés, ajouter l’eau et laisser mijoter 15 min. Mixer, saler, poivrer, et parsemer de persil.\n   - *Impact anti-gaspi* : Utilise 100% des carottes et 30% du persil.\n\n3. **Gâteau au fromage blanc et carottes** (30 min, dessert)\n   - *Ingrédients* : 200g de fromage blanc, 2 carottes râpées, 2 œufs, 80g de sucre, 100g de farine, 1 c. à café de levure, persil pour la décoration (optionnel).\n   - *Préparation* : Mélanger les ingrédients, verser dans un moule et cuire 25 min à 180°C. *Astuce* : Saupoudrez de persil pour un contraste visuel.\n   - *Impact anti-gaspi* : Utilise 100% du fromage blanc et 60% des carottes.\n\n*Conseil* : Le tzatziki est la solution la plus rapide pour éviter le gaspillage du fromage blanc. Vous pouvez aussi congeler les carottes râpées pour une utilisation ultérieure.', 'follow_up_actions': [{'label': 'Ajouter les ingrédients manquants à mon panier', 'action': 'add_missing_ingredients', 'recipe_id': 'TZATZIKI-2024'}, {'label': 'Voir d’autres recettes avec du persil', 'action': 'show_more_recipes', 'ingredient': 'persil'}, {'label': 'Recevoir des alertes anti-gaspi pour mes prochains achats', 'action': 'enable_waste_alerts'}]}
-
-**Blueprint:** `agent_with_tools` (impact: medium · cost: low · complexity: medium · TTV: 10-14 weeks based on similar deployments at peer companies (see Too Good To Go’s AI recipe generator, sustainability_ai_2023-4f5a2d8e).)
-
-**Top risk:** Customer distrust in AI-generated recipes for perishable items without human validation.
-
-**Mistral products:** Mistral Large 3, Mistral Embed, On-device inference
-
-_Specificity score: 0.04_
-
-**Architecture blueprint:**
-```mermaid
-graph TD
-    A[User Query] --> B[On-Device NLP Engine]
-    B --> C[Transaction Data Lookup]
-    C --> D[Expiry Date Extractor]
-    D --> E[Ingredient Matcher]
-    E --> F[Recipe DB]
-    E --> G[Anti-Waste Rules Engine]
-    F & G --> H[Response Generator]
-    H --> I[User Response]
+    A[Internal Systems
+    (SAP, IoT, Supplier Portals)] --> B[Data Extraction Agent]
+    B --> C[Compliance Engine]
+    C --> D[Report Generator
+    (CSRD/SFDR Formats)]
+    D --> E[Gap Analyzer]
+    E --> F[Corrective Action Suggester]
+    F --> G[On-Prem Deployment]
 ```
 
 ## Considered but not selected
-- **carrefour-freshness-prediction** — Lacks direct integration with customer-facing value; better suited as an internal supply chain tool.
-- **carrefour-instore-nlp-voice-assistant** — Overlaps with the top-ranked multilingual shopping agent without adding distinct value.
-- **carrefour-retail-media-optimization** — Requires Carrefour Media-specific data assets not confirmed in the corpus.
-- **carrefour-checkout-optimization** — Operational efficiency focus without clear customer impact or revenue uplift.
+- **carrefour_freshness_guardian** — Overlap with existing perishables management systems; lower novelty than dynamic planogram optimization.
+- **carrefour_private_label_product_generator** — Lacks clear data assets (e.g., customer preference data) to train the model effectively.
+- **carrefour_returns_automation_agent** — Lower impact than supply chain or compliance use cases; returns processing is not a stated priority in Carrefour’s 2030 AI plan.
+- **carrefour_localized_promotion_generator** — Feasibility risk: requires granular customer segmentation data, which Carrefour’s existing initiatives do not demonstrate.
 
 ---
 ## Report quality signals
 
-- **Diversity** (avg pairwise cosine distance): `0.12`
-- **Specificity** per use case: `0.03`, `0.02`, `0.04`
-- **Mistral product diversity**: `5` distinct products across the three use cases
-- **Time-to-value spread**: 12-16 weeks based on similar deployments at peer companies (see Gap Inc. AI reimagining, google_cloud_1302-520d929b24). · 16-20 weeks based on similar deployments at peer companies (see Kroger’s AI-driven private label expansion, retail_analytics_2023-8a7b3c1d). · 10-14 weeks based on similar deployments at peer companies (see Too Good To Go’s AI recipe generator, sustainability_ai_2023-4f5a2d8e).
-- **Cost-tier spread**: medium · medium · low
-- **Fact-check pass rate**: `86%` (6/7 claims supported by research)
+- **Diversity** (avg pairwise cosine distance): `0.13`
+- **Specificity** per use case: `0.90`, `0.80`, `0.70`
+- **Mistral product diversity**: `6` distinct products across the three use cases
+- **Time-to-value spread**: 10–24 weeks (across 3 use cases)
+- **Cost-tier spread**: high, medium, medium
+- **Fact-check pass rate**: `33%` (4/12 claims supported by research)
 
-**Meta-evaluator confidence**: `0.40` (NOT ready — needs revision)
-**Cross-cutting concern**: All three use cases rely on Carrefour's 10B+ transaction dataset as a core data asset, but none explicitly address data access, governance, or integration risks. Additionally, all three avoid Carrefour's stated strategic focus on supply chain optimization and agentic commerce (e.g., ChatGPT integration), which are already active initiatives.
-**Duplicate flag**: AI-assisted private label product development overlaps with existing initiatives like Carrefour's generative AI for procurement (quote comparison, tender drafting) and internal purchasing processes, which already leverage AI for product selection and analysis.
+**Meta-evaluator confidence**: `0.50` (NOT ready — needs revision)
+**Cross-cutting concern**: All three use cases assume access to granular, real-time internal data (SAP/ERP, smart shelf labels, IoT sensors) without explicit validation of Carrefour's current data infrastructure or integration readiness. The company context lacks details on data assets, tech maturity, or constraints, making these assumptions high-risk.

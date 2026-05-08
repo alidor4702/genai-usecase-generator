@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import timedelta
 
 import mistralai.workflows as workflows
@@ -57,6 +58,43 @@ def _coerce_str_list(v: object) -> list[str]:
     if isinstance(v, list):
         return [str(x) for x in v if x]
     return []
+
+
+# Corpus-shaped ID regex — used to strip fabricated IDs from narrative prose.
+_CORPUS_ID_RE = re.compile(
+    r"\b(google_cloud_1302|google_cloud_blueprints|evidently)-[0-9a-f]{6,16}\b"
+)
+
+
+def _scrub_narrative_ids(text: str, valid_ids: set[str]) -> tuple[str, list[str]]:
+    """Find corpus-shaped IDs in `text`. Drop any not in `valid_ids` and
+    surrounding parenthetical scaffolding. Return (scrubbed_text, dropped_ids).
+
+    Examples handled:
+      "anchored on (precedent google_cloud_1302-abc123)" → drops the parenthetical
+      "see Kroger's deployment, retail_2023-xx" → won't match (different prefix)
+        — those are caught by a broader sweep below
+    """
+    dropped: list[str] = []
+    # First pass: corpus-shaped IDs
+    for m in list(_CORPUS_ID_RE.finditer(text)):
+        if m.group(0) not in valid_ids:
+            dropped.append(m.group(0))
+    if dropped:
+        # Strip parentheticals containing any dropped ID
+        for bad in set(dropped):
+            text = re.sub(r"\s*\([^)]*" + re.escape(bad) + r"[^)]*\)", "", text)
+            text = text.replace(bad, "[unanchored]")
+    # Second pass: tokens that LOOK like corpus IDs but use a wrong prefix
+    # (the model invents `retail_analytics_2023-...`, `sustainability_ai_2023-...`)
+    fake_pattern = re.compile(r"\b[a-z][a-z_]{4,40}_\d{4}-[0-9a-f]{6,16}\b")
+    for m in list(fake_pattern.finditer(text)):
+        token = m.group(0)
+        if token not in valid_ids:
+            dropped.append(token)
+            text = re.sub(r"\s*\([^)]*" + re.escape(token) + r"[^)]*\)", "", text)
+            text = text.replace(token, "[unanchored]")
+    return text, dropped
 
 
 def filter_and_promote(
@@ -146,7 +184,10 @@ def _build_user_message(
 
 
 def _coerce_enriched(
-    raw: dict[str, object], scored: ScoredCandidate, verdict: VerificationVerdict
+    raw: dict[str, object],
+    scored: ScoredCandidate,
+    verdict: VerificationVerdict,
+    valid_corpus_ids: set[str] | None = None,
 ) -> EnrichedUseCase:
     blueprint_str = str(raw.get("blueprint_pattern") or "rag")
     try:
@@ -177,20 +218,37 @@ def _coerce_enriched(
         complexity = ComplexityTier.HIGH
 
     ttv_raw = raw.get("time_to_value")
-    if isinstance(ttv_raw, dict):
-        ttv = TimeToValue(
-            estimate=str(ttv_raw.get("estimate", "unknown")),
-            anchored_to=list(ttv_raw.get("anchored_to") or []),
-        )
-    else:
-        ttv = TimeToValue(estimate=str(ttv_raw or "unknown"))
 
     builds_on = verdict == VerificationVerdict.PARTIAL_OVERLAP
+
+    # Scrub fabricated corpus-shaped IDs from any free-text field.
+    valid = valid_corpus_ids or set()
+    description_raw = str(raw.get("description", scored.candidate.description))
+    why_raw = str(raw.get("why_this_company", scored.candidate.why_this_company))
+    risk_raw = str(raw.get("top_implementation_risk", ""))
+    description, dropped_d = _scrub_narrative_ids(description_raw, valid)
+    why_this, dropped_w = _scrub_narrative_ids(why_raw, valid)
+    risk_text, dropped_r = _scrub_narrative_ids(risk_raw, valid)
+    if isinstance(ttv_raw, dict):
+        ttv_text, dropped_t = _scrub_narrative_ids(str(ttv_raw.get("estimate") or "unknown"), valid)
+        ttv = TimeToValue(estimate=ttv_text, anchored_to=list(ttv_raw.get("anchored_to") or []))
+    else:
+        ttv_text, dropped_t = _scrub_narrative_ids(str(ttv_raw or "unknown"), valid)
+        ttv = TimeToValue(estimate=ttv_text)
+    total_dropped = dropped_d + dropped_w + dropped_r + dropped_t
+    if total_dropped:
+        logger.warning(
+            "select_enrich: scrubbed %d fabricated IDs from %s narrative: %s",
+            len(total_dropped),
+            scored.candidate.id,
+            total_dropped[:6],
+        )
+
     return EnrichedUseCase(
         id=str(raw.get("id", scored.candidate.id)),
         title=str(raw.get("title", scored.candidate.title)),
-        description=str(raw.get("description", scored.candidate.description)),
-        why_this_company=str(raw.get("why_this_company", scored.candidate.why_this_company)),
+        description=description,
+        why_this_company=why_this,
         example_input=str(raw.get("example_input", "")),
         example_output=str(raw.get("example_output", "")),
         suggested_mistral_products=(
@@ -203,7 +261,7 @@ def _coerce_enriched(
         operating_cost_tier=cost,
         impact_tier=impact,
         complexity_tier=complexity,
-        top_implementation_risk=str(raw.get("top_implementation_risk", "")),
+        top_implementation_risk=risk_text,
         inspired_by=_coerce_str_list(raw.get("inspired_by")) or scored.candidate.inspired_by,
         grounded_in=_coerce_str_list(raw.get("grounded_in")) or scored.candidate.grounded_in,
         builds_on_existing=builds_on,
@@ -230,6 +288,20 @@ async def select_and_enrich_activity(
         while len(final) < 3 and appendix:
             final.append(appendix.pop(0))
 
+    # Build the valid corpus IDs set from all candidates' validated inspired_by
+    # plus the few-shot example IDs that the model also sees in the prompt.
+    valid_corpus_ids: set[str] = set()
+    for sc in scored.scored:
+        valid_corpus_ids.update(sc.candidate.inspired_by)
+    # Few-shot example IDs (kept in sync with src/prompts.py FEW_SHOT_EXAMPLES)
+    valid_corpus_ids.update(
+        {
+            "google_cloud_1302-9177e5acd1",
+            "google_cloud_blueprints-e59370be9e",
+            "google_cloud_1302-d90664fc2c",
+        }
+    )
+
     client = Mistral(api_key=settings.mistral_api_key)
     user_msg = _build_user_message(final, appendix, verdicts, ctx)
     r = await client.chat.complete_async(
@@ -255,7 +327,12 @@ async def select_and_enrich_activity(
             if not isinstance(raw, dict):
                 continue
             enriched.append(
-                _coerce_enriched(raw, sc, verdicts.get(sc.candidate.id, VerificationVerdict.PASS))
+                _coerce_enriched(
+                    raw,
+                    sc,
+                    verdicts.get(sc.candidate.id, VerificationVerdict.PASS),
+                    valid_corpus_ids,
+                )
             )
 
     # Pad if the model returned fewer than 3 enriched outputs
@@ -263,7 +340,10 @@ async def select_and_enrich_activity(
         sc = final[len(enriched)]
         enriched.append(
             _coerce_enriched(
-                {"id": sc.candidate.id}, sc, verdicts.get(sc.candidate.id, VerificationVerdict.PASS)
+                {"id": sc.candidate.id},
+                sc,
+                verdicts.get(sc.candidate.id, VerificationVerdict.PASS),
+                valid_corpus_ids,
             )
         )
 

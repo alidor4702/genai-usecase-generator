@@ -28,6 +28,7 @@ from src.activities.generate import generate_candidates_activity
 from src.activities.meta_evaluate import meta_evaluate_activity
 from src.activities.research import (
     enrich_company_context_activity,
+    gather_bundle_for_company,
     research_company_activity,
 )
 from src.activities.retrieve import retrieve_precedents_activity
@@ -40,6 +41,9 @@ from src.models import (
     FocusArea,
     Report,
     ResearchDepth,
+    VerificationBatch,
+    VerificationResult,
+    VerificationVerdict,
     WorkflowInput,
 )
 from src.ui.render import render_report_to_markdown
@@ -106,7 +110,10 @@ async def run_pipeline(params: WorkflowInput, write_md: Path | None) -> int:
     log.info("retrieved %d precedents", len(retrieved.items))
 
     log.info("=== Step 3: Generate 12 candidates ===")
-    batch = await generate_candidates_activity(ctx, retrieved, params.focus_area.value, True)
+    bundle = await gather_bundle_for_company(params.company_name, params.research_depth)
+    batch = await generate_candidates_activity(
+        ctx, retrieved, params.focus_area.value, True, raw_bundle=bundle
+    )
     log.info(
         "generated %d candidates | diversity=%.3f | regenerated=%s",
         len(batch.candidates),
@@ -136,8 +143,61 @@ async def run_pipeline(params: WorkflowInput, write_md: Path | None) -> int:
         review.weakest_use_case_id,
     )
 
+    # Targeted regeneration of the weakest use case if confidence below
+    # threshold (one round only — bounded cost, matches architecture spec).
+    original_confidence = review.confidence
+    regenerated_use_case_id: str | None = None
+    if review.confidence < settings.meta_eval_confidence_threshold and review.weakest_use_case_id:
+        log.info(
+            "=== Step 7b: Regeneration (weakest use case = %s) ===",
+            review.weakest_use_case_id,
+        )
+        weak_id = review.weakest_use_case_id
+        # Find the weakest use case in the current top-3 and re-enrich JUST that one
+        weak_idx = next((i for i, u in enumerate(enriched_uses) if u.id == weak_id), None)
+        if weak_idx is not None:
+            # Force the weakest one OUT of the verified set so select_and_enrich
+            # promotes the next-highest near-miss in its place. Mark it as
+            # confirmed_existing — that's the verdict select_and_enrich uses to drop.
+            forced_drop = VerificationBatch(
+                results=[
+                    r
+                    if r.candidate_id != weak_id
+                    else VerificationResult(
+                        candidate_id=weak_id,
+                        verdict=VerificationVerdict.CONFIRMED_EXISTING,
+                        rationale="Marked for regen — meta-eval flagged as weakest.",
+                    )
+                    for r in verified.results
+                ]
+            )
+            new_uses, new_rejected = await select_and_enrich_activity(scored, forced_drop, ctx)
+            review2, fact_claims2 = await meta_evaluate_activity(new_uses, new_rejected, ctx)
+            log.info(
+                "regen result: confidence %.2f → %.2f | ready=%s",
+                original_confidence,
+                review2.confidence,
+                review2.sales_engineer_ready,
+            )
+            # Keep the regen if it actually improved confidence
+            if review2.confidence > original_confidence:
+                enriched_uses = new_uses
+                rejected = new_rejected
+                review = review2
+                fact_claims = fact_claims2
+                regenerated_use_case_id = weak_id
+            else:
+                log.info("regen did not improve confidence, keeping original")
+
     log.info("=== Quality signals ===")
     signals = await compute_quality_signals_activity(enriched_uses, ctx, fact_claims)
+    if regenerated_use_case_id:
+        log.info(
+            "regen footer: original_confidence=%.2f, regenerated=%s, final_confidence=%.2f",
+            original_confidence,
+            regenerated_use_case_id,
+            review.confidence,
+        )
 
     intro = (
         f"GenAI use cases for {ctx.identity.name}: three customer-ready proposals "

@@ -61,33 +61,45 @@ initiatives, and a verified-companies-index match), produce ONE structured
 `CompanyContext` JSON object.
 
 Hard rules:
-- Use the provided signals as the basis for every field. If a field is not
-  supported by ANY signal, output the empty value ("" or [] or "unknown").
-- IMPORTANT: a signal can be the structured Wikidata field (like `industry`)
-  OR free text inside the Wikipedia summary, news bodies, or job-posting text.
-  Read the summary text — if it says "French multinational retail and
-  wholesaling corporation", that DIRECTLY supports `classification.industry =
-  "Retail"` and `classification.geography = "France"` even if the structured
-  Wikidata fields came back empty.
-- Specifically: NEVER output "Unknown" / "unknown" / "" for a field if the
-  same information is unambiguously in the Wikipedia summary or news bodies.
-  Extract it. The strict rule is "no fabrication" — copying clearly-stated
-  facts from the summary is NOT fabrication.
+- Use the provided signals as the basis for every field. A signal can be a
+  structured Wikidata field (like `industry`) OR free text inside the Wikipedia
+  summary, news bodies, or job postings. READ the prose carefully and extract
+  facts from it; do not just defer to structured fields.
+- NEVER output "Unknown" / "" / [] for a field if the information IS available
+  in the prose. Copying clearly-stated facts is NOT fabrication.
+- Be DENSE. Empty lists are usually a synthesis failure, not a data limit.
+  - `data_and_tech.likely_data_assets`: aim for 4-8 entries. Infer from the
+    business model — a hypermarket chain has loyalty data, transaction data,
+    in-store imagery, supply chain telemetry, supplier catalogs. State them.
+  - `strategic_context.stated_priorities`: aim for 3-6 entries. Pull every
+    public commitment, transformation theme, sustainability target, or
+    multi-year plan mentioned in news/Wikipedia. Carbon-neutral goals,
+    digital transformation themes, retail-media expansion, regional growth —
+    all qualify. Read the news bodies, don't just headline-skim.
+  - `business.key_products_or_services`: aim for 3-6 entries. Format names,
+    private-label brands, financial-services arms, retail-media networks,
+    digital platforms — all qualify. Be specific (Carrefour Bio, Carrefour
+    Express, Carrefour Banque, Carrefour Media — not just "groceries").
+  - `classification.sub_industries`: aim for 2-4 entries.
+  - `business.business_model`: 2-3 sentence description, not a single label.
+- `free_text_notes`: any company-specific detail that doesn't cleanly fit a
+  structured field but matters for downstream generation goes here. 2-5
+  sentences. This is your escape valve — use it.
+- IF SIGNALS CONTRADICT (Wikipedia says X, news suggests Y), include both in
+  the relevant fields and lower confidence accordingly.
 - Do NOT extract financial details (revenue, employee count, stock price,
   founding year, executive names) — they don't drive downstream decisions.
 - `existing_ai_initiatives` MUST enumerate every distinct already-deployed
-  initiative discovered. The downstream pipeline uses these as a hard gate
-  against recommending what the company already does.
-- `meta.research_confidence` is a float in [0, 1] reflecting how coherently
-  the signals converge. Sparse / contradictory signals → lower confidence.
-- IF PARALLEL SIGNALS CONTRADICT EACH OTHER (Wikipedia says industry X but
-  recent news suggests pivot to Y, etc.), include both in the relevant fields
-  and lower confidence accordingly. Do not silently pick one.
+  initiative discovered.
+- `meta.research_confidence` reflects how coherently the signals converge.
+  Calibration: a famous public company with rich Wikipedia + multiple news
+  articles + verified-index hit should be 0.80-0.95. Niche / sparse
+  signals → 0.40-0.65.
 - The verified-companies index is a confidence boost, never a gate.
-- `scale.size_tier` is one of: "startup", "scaleup", "enterprise", "unknown"
-- `scale.public_or_private` is one of: "public", "private", "unknown"
-- `business.primary_customers` is one of: "B2B", "B2C", "B2G", "mixed", "unknown"
-- `data_and_tech.known_tech_maturity` is one of: "high", "medium", "low", "unknown"
+- Enum constraints: `scale.size_tier` ∈ {startup, scaleup, enterprise, unknown};
+  `scale.public_or_private` ∈ {public, private, unknown}; `business.primary_customers`
+  ∈ {B2B, B2C, B2G, mixed, unknown}; `data_and_tech.known_tech_maturity` ∈
+  {high, medium, low, unknown}.
 
 Output STRICT JSON matching the CompanyContext schema; no markdown, no commentary.
 """
@@ -319,10 +331,28 @@ def _coerce_company_context(
         sources.append("jobs")
     if bundle.verified_match.matched and "verified_index" not in sources:
         sources.append("verified_index")
+    # Confidence floor — when several signals corroborate, the model often
+    # underrates its own confidence. Floor at 0.7 when verified + Wikipedia
+    # found + ≥1 news article + ≥1 existing-initiative.
+    if (
+        bundle.verified_match.matched
+        and bundle.wikipedia.found
+        and len(bundle.news) >= 1
+        and len(deduped) >= 1
+    ):
+        confidence = max(confidence, 0.75)
+
     meta = CompanyMeta(
         research_confidence=max(0.0, min(1.0, confidence)),
         research_sources=sources,
         is_verified=bundle.verified_match.matched,
+    )
+
+    free_text_notes = data.get("free_text_notes")
+    free_text_str = (
+        str(free_text_notes).strip()
+        if isinstance(free_text_notes, str) and free_text_notes.strip()
+        else None
     )
 
     return CompanyContext(
@@ -335,6 +365,7 @@ def _coerce_company_context(
         existing_ai_initiatives=deduped,
         constraints=constraints,
         meta=meta,
+        free_text_notes=free_text_str,
     )
 
 
@@ -354,6 +385,15 @@ async def research_company_activity(
         ctx.meta.research_sources,
     )
     return ctx
+
+
+async def gather_bundle_for_company(
+    company_name: str, depth: ResearchDepth = ResearchDepth.MEDIUM
+) -> ResearchBundle:
+    """Public helper so the workflow / CLI can pass the raw bundle to the
+    generation step (which uses it to find specifics the synthesizer may have
+    flattened). Cache hits make this near-free on the second call."""
+    return await _gather_research_bundle(company_name, depth)
 
 
 # ---------------------------------------------------------------------------

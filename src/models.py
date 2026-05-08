@@ -260,6 +260,11 @@ class CompanyContext(BaseModel):
     existing_ai_initiatives: list[ExistingInitiative] = Field(default_factory=list)
     constraints: CompanyConstraints = Field(default_factory=CompanyConstraints)
     meta: CompanyMeta
+    # Open-ended catch-all: anything specific to this company that didn't
+    # cleanly fit a structured field (e.g. Carrefour Media as a retail-media
+    # priority, the Couche-Tard merger talks). Generation reads this so the
+    # schema doesn't bottleneck the model on under-fitted facts.
+    free_text_notes: str | None = None
 
 
 class ResearchBundle(BaseModel):

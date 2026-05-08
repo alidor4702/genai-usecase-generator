@@ -94,6 +94,21 @@ def _format_use_case_md(uc: EnrichedUseCase, specificity: float | None) -> str:
     return "\n".join(parts)
 
 
+def _summarize_ttv_spread(spreads: list[str]) -> str:
+    """Render TTV as a terse summary, not concatenated full prose."""
+    import re as _re
+
+    weeks: list[int] = []
+    for s in spreads:
+        for m in _re.finditer(r"(\d+)\s*[-–]\s*(\d+)\s*weeks", s.lower()):
+            weeks.extend([int(m.group(1)), int(m.group(2))])
+    if weeks:
+        return f"{min(weeks)}–{max(weeks)} weeks (across {len(spreads)} use cases)"
+    if any("unknown" in s.lower() for s in spreads):
+        return f"mixed (some unknown across {len(spreads)} use cases)"
+    return f"{len(spreads)} use cases, see per-card detail"
+
+
 def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> str:
     lines: list[str] = ["---", "## Report quality signals", ""]
     lines.append(f"- **Diversity** (avg pairwise cosine distance): `{signals.diversity:.2f}`")
@@ -104,8 +119,11 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
     lines.append(
         f"- **Mistral product diversity**: `{signals.mistral_product_diversity}` distinct products across the three use cases"
     )
-    lines.append("- **Time-to-value spread**: " + " · ".join(signals.time_to_value_spread))
-    lines.append("- **Cost-tier spread**: " + " · ".join(t.value for t in signals.cost_tier_spread))
+    lines.append(
+        f"- **Time-to-value spread**: {_summarize_ttv_spread(signals.time_to_value_spread)}"
+    )
+    cost_summary = ", ".join(t.value for t in signals.cost_tier_spread)
+    lines.append(f"- **Cost-tier spread**: {cost_summary}")
     lines.append(
         f"- **Fact-check pass rate**: `{signals.fact_check_pass_rate:.0%}` ({sum(1 for c in signals.fact_check if c.passed)}/{len(signals.fact_check)} claims supported by research)"
     )

@@ -84,13 +84,24 @@ Hard rules:
 - Every candidate MUST cite WHAT IS SPECIFIC TO THIS COMPANY in `why_this_company`
   — its data assets, stated priorities, regulatory context. Never reasoning at
   the industry level alone ("any retailer would benefit from X" is forbidden).
+  Use the RAW research signals (Wikipedia summary, news bodies) to find dense
+  company-specific hooks — don't be limited to the structured CompanyContext
+  fields if the prose mentions important specifics (named brands, named
+  products, regional formats, partnerships, regulatory quirks).
 - `inspired_by` MUST be a subset of the retrieved precedent IDs listed in the
   user message. Do NOT invent IDs. Empty list is acceptable for novel directions.
   Any inspired_by ID not in the retrieved list will be dropped post-generation.
-- `grounded_in` is a list of company-context field paths the candidate cites.
-  Use `field.subfield[N]` for list items (always include the index) and
-  `field.subfield` for scalar fields. Do NOT invent paths — paths not in the
-  actual schema will be dropped post-generation.
+- `grounded_in`: aim for **at least 3 distinct company-context field paths
+  per candidate**. Use `field.subfield[N]` for list items (always include the
+  index) and `field.subfield` for scalar fields. Do NOT invent paths — paths
+  not in the actual schema will be dropped post-generation.
+- DO NOT use corpus-shaped IDs (e.g. `google_cloud_1302-...`,
+  `evidently-...`, `google_cloud_blueprints-...`) anywhere in free-text
+  fields like `why_this_company` or `estimated_impact_summary`. IDs are
+  reserved for the structured `inspired_by` field. In free text, you may
+  name companies (e.g. "comparable deployments at Sephora and Estée
+  Lauder") without IDs — that is encouraged and not considered a
+  fabrication. Only fake corpus IDs are forbidden.
 
 Mistral emphasis (conditional — only when `mistral_emphasis=true`):
 - Where naturally applicable, favor patterns that play to Mistral's distinctive
@@ -100,11 +111,17 @@ Mistral emphasis (conditional — only when `mistral_emphasis=true`):
   candidates lean on Mistral-distinctive strengths, that's correct. Don't pad.
 
 Regeneration mode (conditional — only when `regeneration_attempt > 1`):
-- The previous attempt produced candidates that were too similar to each other
-  (avg pairwise cosine similarity = {prev_diversity_score}). Force more
-  diversification: span different parts of the company's surface area —
-  operations, customer-facing, internal tooling, sustainability/ESG, novel
-  agentic patterns — rather than variations on the same theme.
+- The previous attempt produced candidates too similar to each other.
+- The 12 new candidates MUST collectively span at least FOUR of these axes
+  (not just variations within one): customer-facing experience, operations
+  & supply chain, internal employee tooling, sustainability / ESG / regulatory
+  compliance, agentic / multi-step automation, financial-services or
+  monetization patterns. Aim for at least 2 candidates in each of the 4
+  axes you choose.
+- Concretely re-think: if the previous round was all chatbots/conversational,
+  this round should include workflow automation, anomaly detection on
+  telemetry, document AI for compliance, content generation for marketing,
+  retail-media optimization, etc.
 
 Output strict JSON matching the `CandidateBatch` schema:
 {"candidates": [Candidate, ...12 items], "diversity_score": null,
@@ -238,6 +255,14 @@ Tone & style — these are checkable, not vibes:
 - Every numerical claim must be either anchored to a specific peer precedent
   (cite by ID) or marked "unknown". Ranges with explicit "anchored on X"
   citation are acceptable; bare ranges with hedging are not.
+- DO NOT use corpus-shaped IDs (e.g. `google_cloud_1302-...`, `evidently-...`,
+  `google_cloud_blueprints-...`) in free-text fields (`description`,
+  `why_this_company`, `estimated_impact_summary`, anything else) UNLESS that
+  exact ID appears in the candidate's `inspired_by` list. IDs are reserved
+  for the structured `inspired_by` field. In free text you MAY name companies
+  by name (e.g. "comparable deployments at Sephora") without IDs — that is
+  encouraged. Fabricated corpus IDs in prose will be regex-stripped post-
+  enrichment and the offending claim will be flagged.
 
 Also produce `rejected_appendix`: list of one-line reasons per near-miss
 candidate from the rejected pool.

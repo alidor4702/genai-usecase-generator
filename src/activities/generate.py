@@ -40,6 +40,7 @@ from src.models import (
     CandidateBatch,
     CompanyContext,
     Novelty,
+    ResearchBundle,
     RetrievedPrecedents,
 )
 from src.prompts import FEW_SHOT_EXAMPLES, GENERATION_SYSTEM
@@ -91,6 +92,25 @@ def _format_few_shots(examples: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
+def _format_raw_bundle(bundle: ResearchBundle | None) -> str:
+    """Pass raw Wikipedia + news prose to generation so the model can find
+    company-specific facts the synthesizer flattened. Helps when the structured
+    CompanyContext is thin."""
+    if bundle is None:
+        return "(no raw bundle available — work from the structured CompanyContext only)"
+    parts: list[str] = []
+    if bundle.wikipedia.found and bundle.wikipedia.summary:
+        parts.append(f"### Wikipedia summary\n{bundle.wikipedia.summary[:3500]}")
+    if bundle.news:
+        parts.append("### Recent news (deep-read bodies)")
+        for n in bundle.news[:3]:
+            body = n.deep_content or n.snippet or ""
+            parts.append(f"- {n.title}\n  {body[:1500]}")
+    if bundle.jobs and bundle.jobs.summary:
+        parts.append(f"### Hiring signal\n{bundle.jobs.summary}")
+    return "\n\n".join(parts) if parts else "(raw bundle present but empty)"
+
+
 def _build_user_message(
     ctx: CompanyContext,
     retrieved: RetrievedPrecedents,
@@ -98,12 +118,19 @@ def _build_user_message(
     mistral_emphasis: bool,
     regeneration_attempt: int,
     prev_diversity_score: float | None,
+    raw_bundle: ResearchBundle | None = None,
 ) -> str:
     sections: list[str] = []
     sections.append("# Five scoring criteria (with positive and negative anchors)\n")
     sections.append(render_criteria_for_prompt())
-    sections.append("\n# Target company context\n")
+    sections.append("\n# Target company context (structured)\n")
     sections.append(_format_company_context(ctx))
+    if ctx.free_text_notes:
+        sections.append(f"\n## Synthesizer free-text notes\n{ctx.free_text_notes}\n")
+    sections.append(
+        "\n# Raw research signals (use these to find company-specific hooks the structured fields missed)\n"
+    )
+    sections.append(_format_raw_bundle(raw_bundle))
     sections.append("\n# Existing AI initiatives at this company (DO NOT duplicate)\n")
     sections.append(_format_existing_initiatives(ctx))
     sections.append("\n# Retrieved peer precedents (use as inspired_by source)\n")
@@ -291,6 +318,7 @@ async def generate_candidates_activity(
     focus_area: str = "general",
     mistral_emphasis: bool = True,
     diversity_threshold: float | None = None,
+    raw_bundle: ResearchBundle | None = None,
 ) -> CandidateBatch:
     """Generate 12 candidate use cases with post-process gauntlet + one regen.
 
@@ -313,6 +341,7 @@ async def generate_candidates_activity(
         mistral_emphasis=mistral_emphasis,
         regeneration_attempt=1,
         prev_diversity_score=None,
+        raw_bundle=raw_bundle,
     )
     candidates = await _call_generator(client, user_msg)
     logger.info("generate: first attempt produced %d candidates", len(candidates))
@@ -348,6 +377,7 @@ async def generate_candidates_activity(
             mistral_emphasis=mistral_emphasis,
             regeneration_attempt=2,
             prev_diversity_score=diversity_score,
+            raw_bundle=raw_bundle,
         )
         candidates2 = await _call_generator(client, user_msg2)
         if len(candidates2) >= 6:
