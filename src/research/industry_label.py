@@ -130,25 +130,70 @@ async def _llm_polish(summary: str, raw_label: str | None) -> str | None:
         return None
 
 
+_GENERIC_INDUSTRY_TAILS = {
+    "company",
+    "corporation",
+    "group",
+    "firm",
+    "business",
+    "enterprise",
+    "conglomerate",
+    "holding",
+}
+
+
+def _looks_too_generic(phrase: str) -> bool:
+    """True if the captured phrase is just demonyms + corporate-noun with no
+    actual industry word. Examples that should return True: 'French
+    transnational company', 'French multinational corporation'. Examples
+    that should return False: 'French multinational universal bank',
+    'French personal care corporation', 'French artificial intelligence
+    (AI) company'.
+
+    Heuristic: <=3 words total AND the last word is a generic corporate
+    tail like 'company' / 'corporation' / 'group'. Three words is the
+    threshold because 'French transnational company' = 3 generic words,
+    while 'global personal care company' = 4 with 'personal care' adding
+    actual industry meaning.
+    """
+    words = phrase.strip().split()
+    if len(words) > 3:
+        return False
+    last_word = words[-1].lower().strip(".,;:")
+    return last_word in _GENERIC_INDUSTRY_TAILS
+
+
 async def derive_clean_industry_label(
     summary: str | None, raw_wikidata_label: str | None
 ) -> str | None:
     """Return a customer-facing industry label, or None if we genuinely have nothing.
 
     Priority order:
-      1. Regex extraction from Wikipedia summary
+      1. Regex extraction from Wikipedia summary — but only if the result
+         actually conveys industry, not just '<demonym> <corporate-tail>'
       2. LLM polish using both the summary and the raw Wikidata label
+         (also runs when the regex result is too generic)
       3. Raw Wikidata label as last resort (still better than nothing)
     """
     summary_str = summary or ""
     regex_label = _regex_extract(summary_str)
-    if regex_label:
+    if regex_label and not _looks_too_generic(regex_label):
         logger.info("industry: regex-extracted '%s' from summary", regex_label)
         return regex_label
+    if regex_label:
+        logger.info(
+            "industry: regex result '%s' looks too generic, falling through to LLM polish",
+            regex_label,
+        )
     polished = await _llm_polish(summary_str, raw_wikidata_label)
     if polished:
         logger.info("industry: LLM-polished '%s' (raw was '%s')", polished, raw_wikidata_label)
         return polished
+    # If LLM polish failed but regex caught something (even generic), prefer
+    # that over raw Wikidata garbage.
+    if regex_label:
+        logger.info("industry: LLM polish unavailable, falling back to generic regex label '%s'", regex_label)
+        return regex_label
     if raw_wikidata_label:
         logger.info("industry: keeping raw Wikidata label '%s' (no better option)", raw_wikidata_label)
     return raw_wikidata_label
