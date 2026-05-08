@@ -370,6 +370,20 @@ CRITICAL — strict claim verification rules (this is the fact-check):
 - Generic claims like "this company has lots of data" are NOT substantive
   and don't need a fact-check entry — focus on specific factual claims.
 
+ILLUSTRATIVE CONTENT IS EXCLUDED FROM FACT-CHECKING:
+- Each use case is presented with a clearly-marked
+  `--- ILLUSTRATIVE ONLY (do NOT fact-check, do NOT include in claims) ---`
+  block containing `example_input` and `example_output`. These are
+  hypothetical demonstrations of system behavior with synthetic data —
+  fabricated transaction IDs, sample percentages, made-up sensor IDs,
+  illustrative dates, etc. They are NOT factual assertions about the
+  company. DO NOT extract claims from these blocks. DO NOT count
+  numbers, names, or IDs inside `example_input` / `example_output` as
+  unsupported claims. Skip them entirely.
+- Only fact-check claims found in `description`, `why_this_company`,
+  `time_to_value.estimate`, `top_implementation_risk`, and the
+  cross-cutting concern itself.
+
 HONESTY MANDATE:
 - If you would advise a Mistral SE NOT to bring this to a customer in its
   current form, SAY SO. Set `sales_engineer_ready: false` and lower

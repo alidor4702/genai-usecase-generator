@@ -43,6 +43,11 @@ def _strip_fence(s: str) -> str:
 
 
 def _format_use_cases(uses: list[EnrichedUseCase]) -> str:
+    """Render use cases for meta-eval. example_input and example_output are
+    explicitly labeled ILLUSTRATIVE so the meta-evaluator excludes their
+    contents from claim verification — they're hypothetical demonstrations
+    of system behavior, not factual assertions about the company.
+    """
     out: list[str] = []
     for uc in uses:
         out.append(
@@ -50,8 +55,10 @@ def _format_use_cases(uses: list[EnrichedUseCase]) -> str:
             f"Title: {uc.title}\n"
             f"Description: {uc.description}\n"
             f"Why this company: {uc.why_this_company}\n"
-            f"Example input: {uc.example_input}\n"
-            f"Example output: {uc.example_output}\n"
+            f"--- ILLUSTRATIVE ONLY (do NOT fact-check, do NOT include in claims) ---\n"
+            f"Example input (hypothetical user query): {uc.example_input}\n"
+            f"Example output (hypothetical system response with synthetic data): {uc.example_output}\n"
+            f"--- end ILLUSTRATIVE block ---\n"
             f"Mistral products: {', '.join(uc.suggested_mistral_products)}\n"
             f"Blueprint pattern: {uc.blueprint_pattern.value}\n"
             f"Time-to-value: {uc.time_to_value.estimate}\n"
