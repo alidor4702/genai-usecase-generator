@@ -130,6 +130,31 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
     lines.append(
         f"- **Fact-check pass rate**: `{signals.fact_check_pass_rate:.0%}` ({sum(1 for c in signals.fact_check if c.passed)}/{len(signals.fact_check)} claims supported by research)"
     )
+    # Per-claim transparency block — without this the aggregate pass rate is
+    # opaque (no way to tell whether meta-eval is being legitimately strict
+    # or being a verbatim-match brat). List each claim's verdict so the
+    # reader can judge for themselves.
+    if signals.fact_check:
+        passed = [c for c in signals.fact_check if c.passed]
+        failed = [c for c in signals.fact_check if not c.passed]
+        lines.append("")
+        lines.append("<details><summary>Fact-check detail (per claim)</summary>")
+        lines.append("")
+        if failed:
+            lines.append(f"**Unsupported ({len(failed)}):**")
+            for c in failed:
+                rationale = c.rationale or "no source contained directly-supporting text"
+                lines.append(
+                    f"- [{c.use_case_id}] {c.claim} — _{rationale[:200]}_"
+                )
+            lines.append("")
+        if passed:
+            lines.append(f"**Supported ({len(passed)}):**")
+            for c in passed:
+                src = c.rationale[:140] + "…" if c.rationale and len(c.rationale) > 140 else (c.rationale or "")
+                lines.append(f"- [{c.use_case_id}] {c.claim}{(' — ' + src) if src else ''}")
+            lines.append("")
+        lines.append("</details>")
     if meta is not None:
         lines.append("")
         lines.append(
