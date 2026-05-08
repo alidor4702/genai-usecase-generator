@@ -26,6 +26,13 @@ import mistralai.workflows as workflows
 from mistralai.client import Mistral
 
 from src.config import settings
+from src.evidence import (
+    from_existing_initiative,
+    from_news_item,
+    from_tavily_result,
+    from_wikipedia,
+)
+from src.trace import trace_step
 from src.models import (
     CompanyBusiness,
     CompanyClassification,
@@ -36,6 +43,8 @@ from src.models import (
     CompanyMeta,
     CompanyScale,
     CompanyStrategicContext,
+    EvidenceKind,
+    EvidenceLedger,
     ExistingInitiative,
     JobsSignal,
     NewsItem,
@@ -45,6 +54,7 @@ from src.models import (
     WikipediaFacts,
 )
 from src.research.existing_initiatives import fetch_existing_initiatives
+from src.research.industry_label import derive_clean_industry_label
 from src.research.jobs import fetch_jobs_signal_safe
 from src.research.news import fetch_recent_news
 from src.research.verification import verify_company
@@ -157,11 +167,20 @@ def _build_synthesis_prompt(name: str, bundle: ResearchBundle) -> str:
     return "\n".join(sections)
 
 
-async def _gather_research_bundle(company_name: str, depth: ResearchDepth) -> ResearchBundle:
-    """Run the parallel sub-tasks per the configured depth toggle."""
+async def _gather_research_bundle(
+    company_name: str, depth: ResearchDepth
+) -> tuple[ResearchBundle, list[tuple[str, str, str]]]:
+    """Run the parallel sub-tasks per the configured depth toggle.
+
+    Returns (bundle, live_verification_sources). The second tuple is empty
+    when fuzzy verification already matched; otherwise it contains the URLs
+    Tavily fetched during live verification, ready to be added to the ledger.
+    """
     # Always-on: Wikipedia, verified-index, existing-initiatives
     wiki_t: asyncio.Task[WikipediaFacts] = asyncio.create_task(fetch_wikipedia_facts(company_name))
-    verify_t: asyncio.Task[VerifiedCompanyMatch] = asyncio.create_task(verify_company(company_name))
+    verify_t: asyncio.Task[tuple[VerifiedCompanyMatch, list[tuple[str, str, str]]]] = (
+        asyncio.create_task(verify_company(company_name))
+    )
     existing_t: asyncio.Task[list[ExistingInitiative]] = asyncio.create_task(
         fetch_existing_initiatives(company_name)
     )
@@ -175,13 +194,14 @@ async def _gather_research_bundle(company_name: str, depth: ResearchDepth) -> Re
         jobs_t = asyncio.create_task(fetch_jobs_signal_safe(company_name))
 
     # Await all
-    wiki_res, verify_res, existing_res = await asyncio.gather(
+    wiki_res, verify_pair, existing_res = await asyncio.gather(
         wiki_t, verify_t, existing_t, return_exceptions=False
     )
+    verify_res, live_sources = verify_pair
     news_res: list[NewsItem] = await news_t if news_t else []
     jobs_res: JobsSignal | None = await jobs_t if jobs_t else None
 
-    return ResearchBundle(
+    bundle = ResearchBundle(
         wikipedia=wiki_res,
         news=news_res,
         jobs=jobs_res,
@@ -189,6 +209,19 @@ async def _gather_research_bundle(company_name: str, depth: ResearchDepth) -> Re
         verified_match=verify_res,
         depth_used=depth,
     )
+
+    # Replace raw Wikidata P452 industry label with a customer-facing one
+    # before any caller sees the bundle. Done here (not just in
+    # research_company_activity) so the gap-fill re-synthesis path also
+    # gets the cleaned label — otherwise re-synthesis re-derives industry
+    # from the raw P452 garbage and overrides the clean version.
+    cleaned_industry = await derive_clean_industry_label(
+        bundle.wikipedia.summary, bundle.wikipedia.industry
+    )
+    if cleaned_industry and cleaned_industry != bundle.wikipedia.industry:
+        bundle.wikipedia.industry = cleaned_industry
+
+    return bundle, live_sources
 
 
 def _strip_fence(s: str) -> str:
@@ -205,22 +238,33 @@ async def _synthesize_company_context(name: str, bundle: ResearchBundle) -> Comp
         raise RuntimeError("MISTRAL_API_KEY required for research synthesis")
     client = Mistral(api_key=settings.mistral_api_key)
     user = _build_synthesis_prompt(name, bundle)
-    r = await client.chat.complete_async(
-        model=settings.mistral_research_model,
-        temperature=0.2,  # consistent factual aggregation
-        max_tokens=4000,
-        timeout_ms=120_000,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYNTHESIS_SYSTEM},
-            {"role": "user", "content": user},
-        ],
-    )
-    text = r.choices[0].message.content
-    if isinstance(text, list):
-        text = "".join(getattr(b, "text", "") for b in text)
-    data = json.loads(_strip_fence(str(text or "")))
-    ctx = _coerce_company_context(name, bundle, data)
+    async with trace_step(
+        "research",
+        settings.mistral_research_model,
+        "chat.complete",
+        inputs_summary=f"synthesize CompanyContext for {name} | depth={bundle.depth_used.value}",
+    ) as ev:
+        r = await client.chat.complete_async(
+            model=settings.mistral_research_model,
+            temperature=0.2,  # consistent factual aggregation
+            max_tokens=6000,
+            timeout_ms=120_000,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": SYNTHESIS_SYSTEM},
+                {"role": "user", "content": user},
+            ],
+        )
+        text = r.choices[0].message.content
+        if isinstance(text, list):
+            text = "".join(getattr(b, "text", "") for b in text)
+        data = json.loads(_strip_fence(str(text or "")))
+        ctx = _coerce_company_context(name, bundle, data)
+        ev.outputs_summary = (
+            f"industry={ctx.classification.industry!r} "
+            f"verified={ctx.meta.is_verified} "
+            f"conf={ctx.meta.research_confidence:.2f}"
+        )
     return ctx
 
 
@@ -369,22 +413,65 @@ def _coerce_company_context(
     )
 
 
+def _seed_ledger_from_bundle(
+    bundle: ResearchBundle,
+    company_name: str,
+    live_verification_sources: list[tuple[str, str, str]] | None = None,
+) -> EvidenceLedger:
+    """Build the initial ledger from the research bundle. Wikipedia + each news
+    item + each existing-initiative-with-source-url + any live-verification
+    URLs becomes one entry."""
+    ledger = EvidenceLedger()
+    wiki_item = from_wikipedia(bundle.wikipedia, company_name)
+    if wiki_item is not None:
+        ledger.add(wiki_item)
+    for n in bundle.news:
+        ledger.add(from_news_item(n))
+    for ei in bundle.existing_initiatives:
+        item = from_existing_initiative(ei)
+        if item is not None:
+            ledger.add(item)
+    for url, title, content in live_verification_sources or []:
+        ledger.add(
+            from_tavily_result(
+                url,
+                title,
+                content,
+                kind=EvidenceKind.COMPANY_VERIFICATION,
+                fetched_at_step="research",
+                confidence="high",
+            )
+        )
+    return ledger
+
+
 @workflows.activity(start_to_close_timeout=timedelta(seconds=120))
 async def research_company_activity(
     company_name: str, depth: ResearchDepth = ResearchDepth.MEDIUM
-) -> CompanyContext:
-    """Workflow activity: gather the research bundle + synthesize CompanyContext."""
+) -> tuple[CompanyContext, EvidenceLedger]:
+    """Workflow activity: gather the research bundle + synthesize CompanyContext.
+
+    Also returns an EvidenceLedger seeded with every external source the
+    research step read — Wikipedia summary, each news article's deep-read
+    body, each existing-initiative source URL, and any live-verification
+    Tavily hits. The ledger threads through the pipeline so downstream steps
+    can pin claims to specific source content.
+    """
     logger.info("research start: company=%s depth=%s", company_name, depth.value)
-    bundle = await _gather_research_bundle(company_name, depth)
+    bundle, live_sources = await _gather_research_bundle(company_name, depth)
+    # `bundle.wikipedia.industry` was already cleaned inside _gather_research_bundle
+    # so the synthesis prompt sees the customer-facing label, not raw P452.
     ctx = await _synthesize_company_context(company_name, bundle)
+    ledger = _seed_ledger_from_bundle(bundle, company_name, live_sources)
     logger.info(
-        "research done: company=%s confidence=%.2f verified=%s sources=%s",
+        "research done: company=%s confidence=%.2f verified=%s sources=%s | ledger=%d entries",
         company_name,
         ctx.meta.research_confidence,
         ctx.meta.is_verified,
         ctx.meta.research_sources,
+        len(ledger.entries),
     )
-    return ctx
+    return ctx, ledger
 
 
 async def gather_bundle_for_company(
@@ -392,8 +479,11 @@ async def gather_bundle_for_company(
 ) -> ResearchBundle:
     """Public helper so the workflow / CLI can pass the raw bundle to the
     generation step (which uses it to find specifics the synthesizer may have
-    flattened). Cache hits make this near-free on the second call."""
-    return await _gather_research_bundle(company_name, depth)
+    flattened). Cache hits make this near-free on the second call. Live-
+    verification sources are dropped here — the research activity already
+    seeded the ledger with them."""
+    bundle, _ = await _gather_research_bundle(company_name, depth)
+    return bundle
 
 
 # ---------------------------------------------------------------------------
@@ -403,30 +493,201 @@ async def gather_bundle_for_company(
 # ---------------------------------------------------------------------------
 
 
-def _identify_gaps(ctx: CompanyContext) -> list[tuple[str, str]]:
-    """Return list of (field_label, search_query) for missing fields that matter."""
-    gaps: list[tuple[str, str]] = []
-    name = ctx.identity.name
-
+def _identify_missing_fields(ctx: CompanyContext) -> list[str]:
+    """Return labels of fields that are unset and matter for downstream generation."""
+    out: list[str] = []
     if _is_unknown(ctx.classification.industry):
-        gaps.append(("industry", f"{name} company industry sector business"))
+        out.append("industry")
     if not ctx.classification.geography or _is_unknown(ctx.classification.geography):
-        gaps.append(("geography", f"{name} company headquarters country where based"))
+        out.append("geography")
     if not ctx.business.business_model or _is_unknown(ctx.business.business_model):
-        gaps.append(("business_model", f"{name} business model how it makes money"))
+        out.append("business_model")
     if not ctx.business.key_products_or_services:
-        gaps.append(("products", f"{name} main products and services offered"))
+        out.append("products")
     if not ctx.data_and_tech.likely_data_assets:
-        gaps.append(("data_assets", f"{name} data assets technology stack platforms"))
+        out.append("data_assets")
     if not ctx.strategic_context.stated_priorities:
-        gaps.append(("priorities", f"{name} strategic priorities goals announcements 2024 2025"))
-    return gaps
+        out.append("priorities")
+    return out
+
+
+def _fallback_query_for(name: str, field: str) -> str:
+    """Hardcoded fallback queries — used when LLM query generation fails."""
+    fallbacks = {
+        "industry": f"{name} company industry sector business",
+        "geography": f"{name} headquarters country location",
+        "business_model": f"{name} business model revenue streams",
+        "products": f"{name} products services offerings list",
+        "data_assets": f"{name} data assets technology stack platforms",
+        "priorities": f"{name} strategic priorities 2024 2025 announcements",
+    }
+    return fallbacks.get(field, f"{name} {field}")
+
+
+_GAP_QUERY_GEN_SYSTEM = """\
+You generate targeted web-search queries to fill specific gaps in a company profile.
+
+Given:
+- The company name
+- A short Wikipedia excerpt (may be empty)
+- A list of missing fields that need filling
+
+For EACH missing field, produce ONE search query that:
+- Is specific (named entities, year if temporal, document type if relevant)
+- Targets primary sources (the company's own announcements, strategy decks,
+  engineering blog, regulatory filings, peer-reviewed analyses) rather than
+  generic aggregator pages
+- Is 4-10 words
+
+Examples of good queries:
+  Field: priorities — "Carrefour 2027 strategy retail media plan"
+  Field: products — "Carrefour private label brands Bio Express"
+  Field: data_assets — "Carrefour loyalty program transaction scale stores"
+
+Examples of bad queries (do NOT produce):
+  "<name> company info" (too generic, will return Wikipedia)
+  "<name> industry sector" (too generic)
+  "<name> overview" (too generic)
+
+Output STRICT JSON: {"queries": [{"field": "priorities", "query": "..."}, ...]}
+"""
+
+
+async def _generate_gap_queries(
+    company_name: str, wiki_summary: str, missing_fields: list[str]
+) -> list[tuple[str, str]]:
+    """Use Mistral Small to produce entity-specific search queries per gap.
+
+    Falls back to hardcoded templates if the model call fails or returns junk.
+    """
+    if not missing_fields:
+        return []
+    if not settings.mistral_api_key:
+        return [(f, _fallback_query_for(company_name, f)) for f in missing_fields]
+
+    client = Mistral(api_key=settings.mistral_api_key)
+    user = (
+        f"Company: {company_name}\n\n"
+        f"Wikipedia excerpt:\n{(wiki_summary or '(none)')[:600]}\n\n"
+        "Missing fields:\n" + "\n".join(f"- {f}" for f in missing_fields)
+    )
+    try:
+        async with trace_step(
+            "gap_fill",
+            settings.mistral_scoring_model,
+            "chat.complete",
+            inputs_summary=f"generate gap queries | fields={missing_fields}",
+        ) as ev:
+            r = await client.chat.complete_async(
+                model=settings.mistral_scoring_model,
+                temperature=0.2,
+                max_tokens=600,
+                timeout_ms=30_000,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": _GAP_QUERY_GEN_SYSTEM},
+                    {"role": "user", "content": user},
+                ],
+            )
+            text = r.choices[0].message.content
+            if isinstance(text, list):
+                text = "".join(getattr(b, "text", "") for b in text)
+            data = json.loads(_strip_fence(str(text or "{}")))
+            ev.outputs_summary = f"queries={len(data.get('queries', []))}"
+    except Exception as e:
+        logger.warning("gap query gen failed: %s — falling back to templates", type(e).__name__)
+        return [(f, _fallback_query_for(company_name, f)) for f in missing_fields]
+
+    raw_queries = data.get("queries", [])
+    out: list[tuple[str, str]] = []
+    if isinstance(raw_queries, list):
+        for q in raw_queries:
+            if not isinstance(q, dict):
+                continue
+            field = str(q.get("field", "")).strip()
+            query = str(q.get("query", "")).strip()
+            if field in missing_fields and 4 <= len(query.split()) <= 12:
+                out.append((field, query))
+    # Add hardcoded fallbacks for any field the LLM didn't cover
+    covered = {f for f, _ in out}
+    for f in missing_fields:
+        if f not in covered:
+            out.append((f, _fallback_query_for(company_name, f)))
+    return out
+
+
+_LAYER2_EXTRACT_SYSTEM = """\
+You extract specific noun phrases from text. Be concrete and verbatim — quote
+exact phrasing from the source where possible. No paraphrasing into generic
+categories. Output STRICT JSON only.
+"""
+
+
+async def _layer2_extract_field(
+    field_name: str, gap_block: str, company_name: str
+) -> list[str]:
+    """One-shot fallback extraction when the synthesis LLM left a list field empty
+    despite the gap-fill block containing usable content. Targets exactly one
+    field at a time so the model can't hedge by writing nothing.
+    """
+    if not settings.mistral_api_key or not gap_block.strip():
+        return []
+    field_descriptions = {
+        "priorities": "specific strategic priorities, transformation themes, or multi-year plans (e.g. 'carbon neutrality by 2050', 'retail-media expansion', 'digital-first transformation')",
+        "data_assets": "specific datasets the company plausibly owns at scale (e.g. 'loyalty card transactions across 13,000 stores', 'in-store CCTV imagery', 'supplier catalog metadata')",
+        "products": "specific named products, brands, sub-brands, or services (e.g. 'Carrefour Bio', 'Carrefour Banque', 'Carrefour Media')",
+    }
+    desc = field_descriptions.get(field_name, field_name)
+    user = (
+        f"From the following text about {company_name}, extract 3-6 {desc}. "
+        f"Each item must be a specific noun phrase, not a generic category. "
+        f"If the text genuinely lacks information about this field, return an empty list.\n\n"
+        f"Text:\n{gap_block[:6000]}\n\n"
+        'Output STRICT JSON: {"items": ["...", "..."]}'
+    )
+    client = Mistral(api_key=settings.mistral_api_key)
+    try:
+        async with trace_step(
+            "gap_fill",
+            settings.mistral_scoring_model,
+            "chat.complete",
+            inputs_summary=f"layer-2 extract field={field_name}",
+        ) as ev:
+            r = await client.chat.complete_async(
+                model=settings.mistral_scoring_model,
+                temperature=0.2,
+                max_tokens=400,
+                timeout_ms=30_000,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": _LAYER2_EXTRACT_SYSTEM},
+                    {"role": "user", "content": user},
+                ],
+            )
+            text = r.choices[0].message.content
+            if isinstance(text, list):
+                text = "".join(getattr(b, "text", "") for b in text)
+            data = json.loads(_strip_fence(str(text or "{}")))
+            ev.outputs_summary = f"items={len(data.get('items', []))}"
+    except Exception as e:
+        logger.warning("layer2 extract failed for %s: %s", field_name, type(e).__name__)
+        return []
+    items = data.get("items", [])
+    if not isinstance(items, list):
+        return []
+    return [str(x).strip() for x in items if str(x).strip()]
 
 
 async def _run_targeted_search(
     tavily_client: object, http_client: httpx.AsyncClient, query: str
-) -> str:
-    """Run one Tavily search, deep-read top 1 result, return aggregated text."""
+) -> tuple[str, list[tuple[str, str, str]]]:
+    """Run one Tavily search, deep-read top 1 result.
+
+    Returns (rendered_block, evidence_tuples) where evidence_tuples is a
+    list of (url, title, content) for every distinct source we read — the
+    caller adds these to the EvidenceLedger so downstream steps can verify
+    claims against the actual fetched content.
+    """
     from tavily import AsyncTavilyClient as _TavilyType  # noqa: F401  (type assist only)
 
     try:
@@ -435,27 +696,30 @@ async def _run_targeted_search(
         )
     except Exception as e:
         logger.warning("completion search failed: %s", type(e).__name__)
-        return ""
+        return "", []
     if not isinstance(resp, dict):
-        return ""
+        return "", []
     parts: list[str] = []
+    sources: list[tuple[str, str, str]] = []
     results = resp.get("results", [])
     for i, r in enumerate(results[:2]):
         title = str(r.get("title") or "")
+        url = str(r.get("url") or "")
         snippet = str(r.get("content") or "")[:1500]
-        parts.append(f"- {title}: {snippet}")
+        parts.append(f"- {title} [{url}]: {snippet}")
+        if snippet and url:
+            sources.append((url, title, snippet))
         # Deep-read only the top result to keep cost down
-        if i == 0:
-            url = str(r.get("url") or "")
-            if url:
-                from scripts._fetch import extract_main_text, fetch_html
+        if i == 0 and url:
+            from scripts._fetch import extract_main_text, fetch_html
 
-                html = await fetch_html(http_client, url, timeout_s=10.0)
-                if html:
-                    body = extract_main_text(html, max_chars=3000)
-                    if body:
-                        parts.append(f"  DEEP-READ {url}:\n  {body}")
-    return "\n".join(parts)
+            html = await fetch_html(http_client, url, timeout_s=10.0)
+            if html:
+                body = extract_main_text(html, max_chars=3000)
+                if body:
+                    parts.append(f"  DEEP-READ {url}:\n  {body}")
+                    sources.append((url, title, body))
+    return "\n".join(parts), sources
 
 
 async def _resynthesize_with_extra_signals(
@@ -467,10 +731,17 @@ async def _resynthesize_with_extra_signals(
     client = Mistral(api_key=settings.mistral_api_key)
     user = (
         _build_synthesis_prompt(name, bundle)
-        + "\n\n## Additional targeted research (gap-filling pass)\n"
+        + "\n\n## Additional targeted research — TRUSTED SIGNALS (gap-filling pass)\n"
+        "Every bullet below was retrieved live from a credible web source for "
+        "this company. You may quote them VERBATIM — these are TRUSTED. Extract "
+        "specific noun phrases as `stated_priorities`, `likely_data_assets`, "
+        "and `key_products_or_services` items. Copy concrete company facts into "
+        "the relevant structured fields. Empty lists are WRONG if the bullets "
+        "below contain real content.\n\n"
         + extra_signal_block
         + "\n\nNow produce the final CompanyContext using ALL signals above, "
-        "including the gap-filling block."
+        "INCLUDING the gap-filling block. Lists are mandatory if the gap-fill "
+        "block has any usable content."
     )
     r = await client.chat.complete_async(
         model=settings.mistral_research_model,
@@ -492,59 +763,155 @@ async def _resynthesize_with_extra_signals(
 
 @workflows.activity(start_to_close_timeout=timedelta(seconds=180))
 async def enrich_company_context_activity(
-    ctx: CompanyContext, bundle: ResearchBundle | None = None
-) -> CompanyContext:
+    ctx: CompanyContext,
+    ledger: EvidenceLedger | None = None,
+    bundle: ResearchBundle | None = None,
+) -> tuple[CompanyContext, EvidenceLedger]:
     """Adaptive research pass: identify Unknown/empty fields and fill them.
 
     For each gap, run a targeted Tavily search and add the results to the
-    synthesis context. Then re-synthesize the CompanyContext.
+    synthesis context. Then re-synthesize the CompanyContext. Every fetched
+    source is added to the EvidenceLedger so downstream claims can pin to it.
 
     Skips silently if there are no gaps OR if Tavily isn't configured.
     """
-    gaps = _identify_gaps(ctx)
-    if not gaps:
+    if ledger is None:
+        ledger = EvidenceLedger()
+    missing = _identify_missing_fields(ctx)
+    if not missing:
         logger.info("enrich_context: no gaps detected, skipping")
-        return ctx
+        return ctx, ledger
     if not settings.tavily_api_key:
-        logger.info("enrich_context: TAVILY_API_KEY missing, skipping (gaps=%d)", len(gaps))
-        return ctx
+        logger.info("enrich_context: TAVILY_API_KEY missing, skipping (gaps=%d)", len(missing))
+        return ctx, ledger
 
-    logger.info("enrich_context: %d gaps to fill: %s", len(gaps), [g[0] for g in gaps])
+    logger.info("enrich_context: %d gaps to fill: %s", len(missing), missing)
 
-    # Run a fresh research bundle to pass to re-synthesis (cached, so cheap)
+    # Run a fresh research bundle to pass to re-synthesis (cached, so cheap).
+    # Live-verification sources from this re-fetch are ignored — the original
+    # research call already seeded the ledger with them.
     if bundle is None:
-        bundle = await _gather_research_bundle(ctx.identity.name, ResearchDepth.LOW)
+        bundle, _ = await _gather_research_bundle(ctx.identity.name, ResearchDepth.LOW)
+
+    # AI-generated entity-specific queries (one per gap), with hardcoded fallbacks.
+    gap_queries = await _generate_gap_queries(
+        ctx.identity.name, bundle.wikipedia.summary or "", missing
+    )
+    logger.info(
+        "enrich_context: generated queries: %s",
+        [(label, q[:60]) for label, q in gap_queries],
+    )
 
     from tavily import AsyncTavilyClient
 
     tavily = AsyncTavilyClient(api_key=settings.tavily_api_key)
     sem = asyncio.Semaphore(3)
 
-    async def _one(label: str, query: str) -> tuple[str, str]:
+    async def _one(label: str, query: str) -> tuple[str, str, list[tuple[str, str, str]]]:
         async with sem:
             async with httpx.AsyncClient(headers={"User-Agent": settings.user_agent}) as http:
-                txt = await _run_targeted_search(tavily, http, query)
-                return label, txt
+                txt, sources = await _run_targeted_search(tavily, http, query)
+                return label, txt, sources
 
-    results = await asyncio.gather(*(_one(label, q) for label, q in gaps))
+    results = await asyncio.gather(*(_one(label, q) for label, q in gap_queries))
     extra_block_lines: list[str] = []
-    for label, txt in results:
+    fetched_sources: list[tuple[str, str, str]] = []
+    gap_block_for_layer2: dict[str, str] = {}
+    for label, txt, sources in results:
         if not txt:
             continue
         extra_block_lines.append(f"### Gap fill: {label}\n{txt}")
+        fetched_sources.extend(sources)
+        gap_block_for_layer2[label] = txt
+
+    # Append every fetched gap-fill source to the ledger
+    for url, title, content in fetched_sources:
+        ledger.add(
+            from_tavily_result(
+                url,
+                title,
+                content,
+                kind=EvidenceKind.GAP_FILL,
+                fetched_at_step="gap_fill",
+                confidence="medium",
+            )
+        )
+
     if not extra_block_lines:
         logger.info("enrich_context: targeted searches returned nothing, returning original ctx")
-        return ctx
+        return ctx, ledger
 
-    extra_signal_block = "\n\n".join(extra_block_lines)
-    enriched = await _resynthesize_with_extra_signals(ctx.identity.name, bundle, extra_signal_block)
+    # Layer-1 re-synthesis is decorative: across all 5 example companies it
+    # consistently returned empty list fields (priorities=0, data_assets=0,
+    # products=0) even with the gap-fill block attached, leaving layer-2 to
+    # do all the actual list population. We skip the ~11s mistral-medium
+    # re-synthesis call and run layer-2 directly against the gap-fill blocks
+    # for the missing list fields. Industry/geography are already handled
+    # by the structural fallback in _coerce_company_context.
+    enriched = ctx.model_copy(deep=True)
     enriched.meta.research_sources = list(
         set(enriched.meta.research_sources + ["completion_agent"])
     )
+
+    # Layer-2 per-field extraction — runs concurrently for the missing list
+    # fields that have gap-fill content. Each call is ~1-2s on Mistral Small.
+    field_specs = [
+        (
+            "priorities",
+            enriched.strategic_context.stated_priorities,
+            gap_block_for_layer2.get("priorities", ""),
+        ),
+        (
+            "data_assets",
+            enriched.data_and_tech.likely_data_assets,
+            gap_block_for_layer2.get("data_assets", ""),
+        ),
+        (
+            "products",
+            enriched.business.key_products_or_services,
+            gap_block_for_layer2.get("products", ""),
+        ),
+    ]
+    targets: list[tuple[str, str]] = [
+        (name, block)
+        for name, current, block in field_specs
+        if not current and len(block) > 200
+    ]
+    layer2_results: list[list[str]] = []
+    if targets:
+        layer2_results = list(
+            await asyncio.gather(
+                *(
+                    _layer2_extract_field(name, block, ctx.identity.name)
+                    for name, block in targets
+                )
+            )
+        )
+    layer2_runs: list[str] = []
+    for (name, _block), items in zip(targets, layer2_results, strict=True):
+        if not items:
+            continue
+        if name == "priorities":
+            enriched.strategic_context.stated_priorities = items
+        elif name == "data_assets":
+            enriched.data_and_tech.likely_data_assets = items
+        elif name == "products":
+            enriched.business.key_products_or_services = items
+        layer2_runs.append(f"{name}({len(items)})")
+
+    # Confidence bump for a successful gap-fill — the metric was undersold before
+    # because we added signal but never re-rated confidence to reflect it.
+    enriched.meta.research_confidence = min(1.0, enriched.meta.research_confidence + 0.10)
     logger.info(
-        "enrich_context: re-synthesized | confidence=%.2f | industry=%s | filled=%s",
+        "enrich_context: re-synthesized | confidence=%.2f | industry=%s | filled=%s | "
+        "layer2=%s | priorities=%d | data_assets=%d | products=%d | ledger=%d",
         enriched.meta.research_confidence,
         enriched.classification.industry,
-        [g[0] for g in gaps],
+        missing,
+        layer2_runs or "(none)",
+        len(enriched.strategic_context.stated_priorities),
+        len(enriched.data_and_tech.likely_data_assets),
+        len(enriched.business.key_products_or_services),
+        len(ledger.entries),
     )
-    return enriched
+    return enriched, ledger
