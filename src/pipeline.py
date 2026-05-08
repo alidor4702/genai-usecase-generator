@@ -203,30 +203,42 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
             if replacement_enriched is not None:
                 new_uses = list(enriched_uses)
                 dropped_uc = new_uses[weak_idx]
-                new_uses[weak_idx] = replacement_enriched
-                new_rejected = list(rejected) + [
-                    RejectedCandidate(
-                        title=dropped_uc.title,
-                        one_line_reason="Replaced by regen — meta-eval flagged as weakest.",
+                # Defensive: if regen returned essentially the same content
+                # as what we dropped (the LLM "fixing" by re-emitting), the
+                # 2nd meta-eval will produce the same result. Skip it and
+                # keep the original — saves ~9s.
+                desc_old = (dropped_uc.description or "").strip()
+                desc_new = (replacement_enriched.description or "").strip()
+                if desc_old and desc_old == desc_new:
+                    log.info(
+                        "regen: produced identical description to dropped use case, "
+                        "skipping 2nd meta-eval and keeping original"
                     )
-                ]
-                review2, fact_claims2 = await meta_evaluate_activity(
-                    new_uses, new_rejected, ctx, retrieved=retrieved, ledger=ledger
-                )
-                log.info(
-                    "regen result: confidence %.2f → %.2f | ready=%s",
-                    original_confidence,
-                    review2.confidence,
-                    review2.sales_engineer_ready,
-                )
-                if review2.confidence > original_confidence:
-                    enriched_uses = new_uses
-                    rejected = new_rejected
-                    review = review2
-                    fact_claims = fact_claims2
-                    regenerated_use_case_id = replacement_sc.candidate.id
                 else:
-                    log.info("regen did not improve confidence, keeping original")
+                    new_uses[weak_idx] = replacement_enriched
+                    new_rejected = list(rejected) + [
+                        RejectedCandidate(
+                            title=dropped_uc.title,
+                            one_line_reason="Replaced by regen — meta-eval flagged as weakest.",
+                        )
+                    ]
+                    review2, fact_claims2 = await meta_evaluate_activity(
+                        new_uses, new_rejected, ctx, retrieved=retrieved, ledger=ledger
+                    )
+                    log.info(
+                        "regen result: confidence %.2f → %.2f | ready=%s",
+                        original_confidence,
+                        review2.confidence,
+                        review2.sales_engineer_ready,
+                    )
+                    if review2.confidence > original_confidence:
+                        enriched_uses = new_uses
+                        rejected = new_rejected
+                        review = review2
+                        fact_claims = fact_claims2
+                        regenerated_use_case_id = replacement_sc.candidate.id
+                    else:
+                        log.info("regen did not improve confidence, keeping original")
 
     # Quality signals
     log.info("=== Quality signals ===")
