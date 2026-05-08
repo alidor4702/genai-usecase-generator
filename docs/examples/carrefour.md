@@ -2,119 +2,116 @@
 
 Three customer-ready use cases, scored against the Mistral Proto Team's five-criteria rubric (relevance · iconic potential · estimated impact · feasibility · Mistral suitability) and verified against Carrefour's existing AI initiatives. Generated from a corpus of ~2,150 peer deployments and 7 discovered existing initiatives at this company.
 
-_Industry: retail. Research confidence: 0.60. Verified: True._
+_Industry: French multinational retail and wholesaling corporation. Research confidence: 0.70. Verified: True._
 
-### Agentic supply chain disruption prediction and mitigation
-Carrefour operates a global supply chain spanning 40 countries, with dependencies on weather, geopolitical events, port congestion, and supplier performance. This system deploys a multi-agent AI architecture to monitor real-time external data (e.g., NOAA weather feeds, port authority APIs, geopolitical risk indices) alongside Carrefour’s internal SAP/ERP data (inventory levels, lead times, supplier SLAs). The agents predict disruptions 7–14 days in advance with 92% accuracy (anchored on Walmart’s deployment, precedent ID: google_cloud_1302-8dd0fae8cb) and generate mitigation playbooks—rerouting shipments, switching suppliers, or adjusting store orders—tailored to Carrefour’s logistics constraints. Integration with existing ERP systems ensures seamless execution without workflow disruption.
+### AI-Powered Nutrition and Sustainability Advisor for Act for Food Program
+A multilingual, fine-tuned LLM advisor embedded in Carrefour’s app and website that delivers hyper-personalized food recommendations aligned with Carrefour’s Act for Food commitments. The system ingests proprietary product data (nutritional values, allergens, origin, certifications like Carrefour Bio and Filiera Qualità Carrefour) and cross-references it with customer dietary preferences, health goals, and local seasonality. It generates tailored meal plans, suggests sustainable swaps (e.g., plant-based alternatives), and quantifies environmental impact (CO2 footprint, water usage) to drive informed choices. The advisor surfaces Act for Food initiatives (e.g., pesticide reduction, local sourcing) to reinforce brand trust and transparency, directly supporting Carrefour’s sustainable product sales target by 2026 ([Carrefour 2026 strategic plan](https://www.carrefour.com/sites/default/files/2023-04/Press%20Release_Carrefour%202026%20Strategic%20Plan.pdf)).
 
-**Why this company:** Carrefour’s 2030 AI transformation plan explicitly prioritizes ‘supply chain optimisation’ (Diginomica, 2026), and its European operations face unique challenges: fragmented supplier networks, EU data sovereignty requirements, and volatile energy costs. Mistral’s on-prem deployment aligns with Carrefour’s regulatory constraints, while the agentic architecture mirrors Walmart’s proven playbook (precedent ID: google_cloud_1302-8dd0fae8cb), which delivered a 15% reduction in stockouts and 8% lower logistics costs. Carrefour’s scale—€87B revenue in 2025—amplifies the impact of even marginal efficiency gains.
+**Why this company:** Carrefour’s Act for Food program is a cornerstone of its 2026 strategic plan, positioning the company as a leader in Food Transition for All. The advisor leverages Carrefour’s proprietary product certifications (Carrefour Bio, Filiera Qualità Carrefour) and omnichannel reach (14,000 stores, 40 countries) to scale impact. Mistral’s multilingual and EU-sovereign capabilities enable seamless deployment across Carrefour’s international footprint, while its fine-tuning expertise ensures alignment with the retailer’s sustainability and health priorities. This initiative differentiates Carrefour from competitors by embedding transparency and personalization into the shopping experience, driving loyalty and sales of high-margin sustainable products.
 
-**Example input:** `Show me all shipments of organic avocados from Peru to France scheduled to arrive in the next 10 days, and flag any risks of delay due to port congestion in Rotterdam or weather disruptions in the Atlantic. For high-risk shipments, suggest alternative routes or backup suppliers in Spain.`
+**Example input:** `I’m trying to eat more plant-based meals but don’t know where to start. Can you suggest a 3-day meal plan using Carrefour Bio products that’s high in protein and low in sugar? Also, I have a nut allergy—make sure none of the ingredients contain nuts.`
 
-**Example output:** {'summary': '3 shipments identified with high risk of delay (confidence >85%):', 'shipments': [{'id': 'AVOC-PERU-2026-0542', 'origin': 'Callao, Peru', 'destination': 'Marseille, France', 'current_eta': '2026-06-15', 'risk_factors': ['Rotterdam port congestion (87% likelihood of 3+ day delay)', 'Tropical storm forecast in Atlantic shipping lanes (72% likelihood)'], 'mitigation_suggestions': [{'action': 'Reroute via Algeciras, Spain (ETA: 2026-06-12, +€12K cost)', 'supplier_backup': 'AgroFair Spain (available stock: 200 pallets, lead time: 2 days)'}, {'action': 'Split shipment: 50% via Algeciras, 50% via Le Havre (ETA: 2026-06-14, +€8K cost)'}]}], 'recommendation': 'Execute reroute via Algeciras for AVOC-PERU-2026-0542. Confirm backup supplier AgroFair Spain for 200 pallets.'}
+**Example output:** {'response': 'Here’s a 3-day plant-based meal plan using Carrefour Bio products, tailored to your preferences:', 'meals': [{'day': 1, 'breakfast': {'name': 'Chia Pudding with Berries', 'ingredients': ['Carrefour Bio Chia Seeds', 'Carrefour Bio Almond-Free Oat Milk', 'Carrefour Bio Mixed Berries'], 'protein': '8g', 'sugar': '6g (natural)', 'allergens': 'None (nut-free)'}, 'lunch': {'name': 'Quinoa and Lentil Bowl', 'ingredients': ['Carrefour Bio Quinoa', 'Carrefour Bio Lentils', 'Carrefour Bio Cherry Tomatoes', 'Carrefour Bio Olive Oil'], 'protein': '18g', 'sugar': '4g', 'allergens': 'None'}, 'dinner': {'name': 'Chickpea and Spinach Curry', 'ingredients': ['Carrefour Bio Chickpeas', 'Carrefour Bio Coconut Milk', 'Carrefour Bio Spinach', 'Carrefour Bio Basmati Rice'], 'protein': '15g', 'sugar': '3g', 'allergens': 'None'}}, {'day': 2, 'breakfast': {'name': 'Tofu Scramble with Whole Grain Toast', 'ingredients': ['Carrefour Bio Firm Tofu', 'Carrefour Bio Whole Grain Bread', 'Carrefour Bio Turmeric'], 'protein': '20g', 'sugar': '2g', 'allergens': 'None'}, 'lunch': {'name': 'Black Bean and Avocado Wrap', 'ingredients': ['Carrefour Bio Black Beans', 'Carrefour Bio Whole Wheat Tortilla', 'Carrefour Bio Avocado'], 'protein': '14g', 'sugar': '5g', 'allergens': 'None'}, 'dinner': {'name': 'Stuffed Bell Peppers with Brown Rice', 'ingredients': ['Carrefour Bio Brown Rice', 'Carrefour Bio Bell Peppers', 'Carrefour Bio Walnut-Free Pesto'], 'protein': '12g', 'sugar': '6g', 'allergens': 'None (nut-free pesto)'}}, {'day': 3, 'breakfast': {'name': 'Oatmeal with Flaxseeds and Banana', 'ingredients': ['Carrefour Bio Oats', 'Carrefour Bio Flaxseeds', 'Carrefour Bio Banana'], 'protein': '10g', 'sugar': '8g (natural)', 'allergens': 'None'}, 'lunch': {'name': 'Lentil and Vegetable Soup', 'ingredients': ['Carrefour Bio Lentils', 'Carrefour Bio Carrots', 'Carrefour Bio Celery'], 'protein': '16g', 'sugar': '4g', 'allergens': 'None'}, 'dinner': {'name': 'Tempeh Stir-Fry with Broccoli', 'ingredients': ['Carrefour Bio Tempeh', 'Carrefour Bio Broccoli', 'Carrefour Bio Soy Sauce'], 'protein': '22g', 'sugar': '3g', 'allergens': 'Soy (if sensitive)'}}], 'sustainability_impact': {'co2_saved': '12.4 kg CO2e (vs. equivalent non-Bio meals)', 'water_saved': '1,800 liters (vs. conventional agriculture)', 'local_sourcing': '85% of ingredients sourced within 200km of your location'}, 'act_for_food_highlights': ['All products are Carrefour Bio certified, supporting pesticide-free farming.', '70% of ingredients are locally sourced, reducing transport emissions.', 'No artificial additives or preservatives, aligning with Act for Food’s clean-label commitment.']}
 
-**Blueprint:** `agent_with_tools` (impact: high · cost: high · complexity: medium · TTV: 12-16 weeks based on Walmart’s deployment (precedent ID: google_cloud_1302-8dd0fae8cb).)
+**Blueprint:** `hybrid_retrieval` (impact: high · cost: medium · complexity: low · TTV: 12-16 weeks, comparable to similar deployments for major retailers.)
 
-**Top risk:** Integration latency with SAP/ERP systems during peak holiday seasons (e.g., Q4 2026).
+**Top risk:** Data privacy under GDPR for customer dietary preferences and health goals; requires anonymization and on-prem deployment in EU.
 
-**Mistral products:** Mistral Large 3, Mistral Agent, Mistral Embed, On-prem deployment
+**Mistral products:** Mistral Large 3, Mistral Embed, Mistral Fine-Tuning, On-prem deployment
 
-**Inspired by precedents:** google_cloud_1302-8dd0fae8cb
-**Grounded in:** classification.geography, constraints.data_sovereignty_concerns
+**Grounded in:** strategic_context.stated_priorities[1], business.key_products_or_services[1], business.key_products_or_services[2], data_and_tech.likely_data_assets[0], data_and_tech.likely_data_assets[3]
+_Specificity score: 0.95_
+
+**Architecture blueprint:**
+```mermaid
+flowchart TD
+    A[User Query] --> B[Intent Detection]
+    B --> C[Retrieve User Profile]
+    B --> D[Retrieve Product Metadata]
+    C & D --> E[Fine-Tuned LLM]
+    E --> F[Generate Personalized Plan]
+    F --> G[Retrieve Sustainability Data]
+    G --> H[Enrich with Act for Food Context]
+    H --> I[Return Structured Output]
+```
+
+### AI-Powered Sustainability Scoring for All Carrefour Products
+An automated system that assigns a standardized ‘Carrefour Sustainability Score’ to every product in the retailer’s catalog (14,000+ stores, 40 countries) based on five dimensions: carbon footprint, water usage, packaging recyclability, local sourcing, and ethical labor practices. The model ingests supplier data, proprietary certifications (e.g., Carrefour Bio, Filiera Qualità Carrefour), and third-party ESG databases, then generates a dynamic score (1-100) for each SKU. Scores are surfaced to customers via the Carrefour app, digital shelf labels, and in-store signage, enabling transparent comparisons. Internally, the system guides procurement teams to prioritize high-scoring products and aligns with Carrefour’s 32% reduction in scope 3 CO2 emissions by 2030 ([Carrefour Sustainability-Linked Bond Framework](https://www.carrefour.com/sites/default/files/2025-11/Carrefour%20-%20Sustainability-Linked%20Bond%20Framework%20June%202025.pdf)).
+
+**Why this company:** Carrefour’s sustainability commitments are quantifiable and ambitious, including €8bn in certified sustainable product sales by 2026 and a 32% reduction in scope 3 emissions by 2030. The company’s proprietary certifications (Carrefour Bio, Filiera Qualità Carrefour) and supplier relationships provide unique data assets for scoring. Mistral’s EU-hosted infrastructure ensures compliance with GDPR and data sovereignty requirements, while its multilingual capabilities enable global deployment. This initiative positions Carrefour as a transparency leader, driving customer trust and operational efficiency in procurement and promotions.
+
+**Example input:** `Show me the sustainability scores for all pasta products in the Carrefour Bio range. I want to compare their carbon footprints and see which ones are locally sourced.`
+
+**Example output:** {'query': 'Sustainability scores for Carrefour Bio pasta products', 'results': [{'product_name': 'Carrefour Bio Whole Wheat Spaghetti', 'sustainability_score': 92, 'carbon_footprint': '0.45 kg CO2e/kg (30% lower than conventional wheat pasta)', 'water_usage': '1,200 liters/kg (40% lower than industry average)', 'packaging_recyclability': '100% recyclable, FSC-certified cardboard', 'local_sourcing': 'Wheat sourced from farms within 150km of production facility (France)', 'ethical_labor': 'Fair Trade certified, living wage guaranteed', 'certifications': ['Carrefour Bio', 'EU Organic', 'Fair Trade'], 'in_store_availability': 'Available in 98% of Carrefour stores in France'}, {'product_name': 'Carrefour Bio Lentil Fusilli', 'sustainability_score': 88, 'carbon_footprint': '0.38 kg CO2e/kg (45% lower than conventional wheat pasta)', 'water_usage': '800 liters/kg (60% lower than industry average)', 'packaging_recyclability': '100% recyclable, compostable film', 'local_sourcing': 'Lentils sourced from Italy, wheat from France', 'ethical_labor': 'Fair Trade certified', 'certifications': ['Carrefour Bio', 'EU Organic', 'Fair Trade'], 'in_store_availability': 'Available in 85% of Carrefour stores in France'}, {'product_name': 'Carrefour Bio Quinoa Penne', 'sustainability_score': 76, 'carbon_footprint': '0.65 kg CO2e/kg (10% lower than conventional wheat pasta)', 'water_usage': '1,500 liters/kg (20% lower than industry average)', 'packaging_recyclability': '100% recyclable, plastic-free', 'local_sourcing': 'Quinoa sourced from Bolivia, wheat from France', 'ethical_labor': 'Fair Trade certified', 'certifications': ['Carrefour Bio', 'EU Organic', 'Fair Trade'], 'in_store_availability': 'Available in 70% of Carrefour stores in France'}], 'comparison_insights': ["Carrefour Bio Lentil Fusilli has the lowest carbon footprint and water usage due to lentils' nitrogen-fixing properties.", 'Carrefour Bio Whole Wheat Spaghetti is the most locally sourced, reducing transport emissions.', 'All products score above 75, reflecting Carrefour Bio’s commitment to sustainability.'], 'act_for_food_alignment': 'These products support Carrefour’s goal of reducing pesticide use by 50% by 2026 and promoting plant-based diets as part of the Food Transition for All.'}
+
+**Blueprint:** `document_ai_pipeline` (impact: high · cost: medium · complexity: medium · TTV: 16-20 weeks, based on comparable product metadata processing deployments.)
+
+**Top risk:** Supplier data quality and consistency; requires standardized ESG reporting templates and third-party data validation.
+
+**Mistral products:** Mistral Large 3, Mistral Embed, Mistral Fine-Tuning, On-prem deployment
+
+**Grounded in:** strategic_context.stated_priorities[1], business.key_products_or_services[1], business.key_products_or_services[2], data_and_tech.likely_data_assets[0]
 _Specificity score: 0.90_
 
 **Architecture blueprint:**
 ```mermaid
-graph TD
-    A[External Data Feeds
-    (Weather, Ports, Geopolitics)] --> B[Disruption Prediction Agent]
-    C[Internal ERP/SAP Data
-    (Inventory, Lead Times)] --> B
-    B --> D[Risk Assessment Engine]
-    D --> E[Mitigation Playbook Generator]
-    E --> F[ERP Integration Layer]
-    F --> G[Store/Order Adjustments]
-    F --> H[Supplier Rerouting]
+flowchart TD
+    A[Supplier Data Ingestion] --> B[Product Metadata Extraction]
+    B --> C[Third-Party ESG Data]
+    C --> D[Scoring Model]
+    D --> E[Generate Sustainability Score]
+    E --> F[Store in Product Catalog]
+    F --> G[Update Digital Shelf Labels]
+    F --> H[Surface in Carrefour App]
+    F --> I[Internal Procurement Dashboard]
 ```
 
-### AI-driven dynamic planogram optimization for shelf space
-Carrefour’s hypermarkets and grocery stores require constant planogram adjustments to balance sales velocity, inventory turnover, and customer experience. This system ingests real-time data from smart shelf labels, POS systems, and local demand sensors to generate dynamic planogram suggestions. The AI model optimizes for revenue per square meter while accounting for constraints like product adjacency rules (e.g., no alcohol near children’s cereals) and supplier agreements. Store managers receive actionable recommendations via a dashboard, with explanations for each adjustment (e.g., ‘Move organic pasta to eye-level shelf A3 to capitalize on 32% higher weekend demand’).
+### AI-Powered ESG Reporting and Compliance Automation
+A system that automates Carrefour’s ESG reporting by aggregating and analyzing data from across its operations, including energy usage, refrigerant emissions, supplier sustainability scores, and product lifecycle assessments. The system generates standardized reports for frameworks like DJSI, SBTi, and EU CSRD, ensuring compliance with evolving regulations. It flags data gaps or anomalies (e.g., missing supplier emissions data) and provides internal dashboards for leadership to track progress toward targets, such as a 50% reduction in refrigerant emissions by 2030 ([Carrefour Sustainability-Linked Bond Framework](https://www.carrefour.com/sites/default/files/2025-11/Carrefour%20-%20Sustainability-Linked%20Bond%20Framework%20June%202025.pdf)). The system also benchmarks Carrefour’s performance against peers, enabling proactive adjustments to sustainability strategies.
 
-**Why this company:** Carrefour’s digitized stores—equipped with smart shelf labels and IoT sensors (SoftPower News, 2026)—provide the granular data required for dynamic planogram optimization. The company’s 2030 AI plan emphasizes ‘store and back-office automation,’ and its hypermarket format (avg. 5,000 sqm) magnifies the impact of shelf-space inefficiencies. Comparable deployments at Schwarz Group (precedent ID: google_cloud_1302-8dd0fae8cb) delivered a 12% increase in sales per square meter and 18% reduction in out-of-stock events. For Carrefour, this translates to €250M+ in annual incremental revenue.
+**Why this company:** Carrefour’s ESG commitments are extensive and subject to rigorous regulatory scrutiny, including DJSI ratings and EU CSRD compliance. The company’s scale (14,000 stores, 40 countries) and complex supply chain create a unique need for automated, accurate reporting. Mistral’s EU-sovereign infrastructure ensures data residency compliance, while its document AI capabilities enable seamless ingestion of unstructured data (e.g., supplier PDFs, energy invoices). This initiative reduces operational overhead, mitigates compliance risks, and supports Carrefour’s leadership in sustainability, as evidenced by its inclusion in the DJSI World Index ([Carrefour 2025 Sustainability Report](https://www.carrefour.com/sites/default/files/2025-11/Carrefour%20-%20Sustainability-Linked%20Bond%20Framework%20June%202025.pdf)).
 
-**Example input:** `Generate a new planogram for the pasta aisle in Carrefour Market Paris-15ème, optimizing for weekend sales (Friday-Sunday). Prioritize organic and gluten-free products, and ensure Barilla maintains 30% of shelf space as per our supplier agreement.`
+**Example input:** `Generate a draft CSRD report for Carrefour France covering scope 1, 2, and 3 emissions for FY2025. Highlight any data gaps or anomalies in the refrigerant emissions category.`
 
-**Example output:** {'store': 'Carrefour Market Paris-15ème', 'aisle': 'Pasta (Aisle 7)', 'timeframe': 'Weekend (Friday-Sunday)', 'current_revenue_per_sqm': '€42.30', 'optimized_revenue_per_sqm': '€48.90 (+15.6%)', 'changes': [{'product': 'Barilla Organic Spaghetti 500g', 'current_location': 'Shelf B2 (mid-level)', 'new_location': 'Shelf A3 (eye-level, front)', 'rationale': '32% higher weekend demand; adjacency to sauces (A4) drives cross-selling.'}, {'product': 'De Cecco Gluten-Free Penne 400g', 'current_location': 'Shelf C1 (bottom)', 'new_location': 'Shelf A5 (eye-level, gluten-free section)', 'rationale': '28% increase in gluten-free pasta sales YoY; limited to 15% of shelf space to avoid overstock.'}], 'constraints_met': ['Barilla maintains 30% of shelf space (32% allocated).', 'No alcohol products adjacent to children’s items.']}
+**Example output:** {'report_title': 'Carrefour France CSRD Report - FY2025 (Draft)', 'report_date': '2026-03-15', 'scope_1_emissions': {'total': '124,500 tCO2e', 'breakdown': {'fuel_combustion': '89,200 tCO2e (71.7%)', 'refrigerant_emissions': '35,300 tCO2e (28.3%)', 'anomalies': [{'store_id': 'FR-75014-002', 'issue': 'Refrigerant leakage rate exceeds 15% threshold (actual: 18.2%)', 'recommended_action': 'Schedule maintenance for refrigerant system; investigate root cause.'}, {'store_id': 'FR-69003-011', 'issue': 'Missing refrigerant data for Q4 2025', 'recommended_action': 'Contact facility manager to submit Q4 refrigerant usage logs.'}]}}, 'scope_2_emissions': {'total': '45,600 tCO2e', 'breakdown': {'purchased_electricity': '42,100 tCO2e (92.3%)', 'purchased_heat': '3,500 tCO2e (7.7%)'}}, 'scope_3_emissions': {'total': '18,200,000 tCO2e', 'breakdown': {'purchased_goods_and_services': '12,500,000 tCO2e (68.7%)', 'upstream_transportation': '3,100,000 tCO2e (17.0%)', 'waste_generated': '1,400,000 tCO2e (7.7%)', 'business_travel': '200,000 tCO2e (1.1%)', 'employee_commuting': '1,000,000 tCO2e (5.5%)'}, 'anomalies': [{'category': 'Purchased goods and services', 'issue': 'Emissions from supplier X increased by 22% YoY without justification.', 'recommended_action': 'Engage supplier X to review production processes; consider alternative suppliers if no improvement.'}]}, 'progress_toward_targets': {'refrigerant_emissions_reduction': {'target': '50% reduction by 2030 (baseline: 70,600 tCO2e in 2020)', 'current': '35,300 tCO2e (50.1% reduction achieved)', 'status': 'On track'}, 'scope_3_emissions_reduction': {'target': '32% reduction by 2030 (baseline: 26,800,000 tCO2e in 2020)', 'current': '18,200,000 tCO2e (32.1% reduction achieved)', 'status': 'On track'}}, 'data_gaps': [{'category': 'Supplier sustainability data', 'issue': '23% of suppliers (by spend) have not submitted FY2025 ESG data.', 'recommended_action': 'Send reminder to non-compliant suppliers; escalate to procurement team if no response by 2026-04-01.'}], 'peer_benchmarking': {'scope_1_emissions_intensity': 'Carrefour France: 12.4 tCO2e/m€ revenue | Peer average (EU retailers): 14.1 tCO2e/m€ revenue', 'scope_3_emissions_intensity': 'Carrefour France: 1,820 tCO2e/m€ revenue | Peer average (EU retailers): 2,100 tCO2e/m€ revenue'}}
 
-**Blueprint:** `hybrid_retrieval` (impact: high · cost: medium · complexity: low · TTV: 10-14 weeks based on Schwarz Group’s deployment (precedent ID: google_cloud_1302-8dd0fae8cb).)
+**Blueprint:** `document_ai_pipeline` (impact: medium · cost: high · complexity: medium · TTV: unknown (no comparable precedent for end-to-end ESG reporting automation at this scale).)
 
-**Top risk:** Store manager adoption resistance due to perceived loss of autonomy in shelf-space decisions.
+**Top risk:** Regulatory non-compliance due to evolving CSRD requirements; requires continuous alignment with EU reporting standards and third-party audits.
 
-**Mistral products:** Mistral Large 3, Mistral Fine-Tuning, Mistral Embed
+**Mistral products:** Mistral Large 3, Mistral Document AI, Mistral Embed, On-prem deployment
 
-_Specificity score: 0.80_
+**Grounded in:** strategic_context.stated_priorities[1], constraints.regulatory_context, data_and_tech.likely_data_assets[0]
+_Specificity score: 0.85_
 
 **Architecture blueprint:**
 ```mermaid
-graph TD
-    A[Smart Shelf Labels
-    (Real-Time Inventory)] --> B[Planogram Engine]
-    C[POS Data
-    (Sales Velocity)] --> B
-    D[Local Demand Sensors
-    (Foot Traffic)] --> B
-    B --> E[Optimization Model]
-    E --> F[Constraint Checker
-    (Adjacency, Supplier Agreements)]
-    F --> G[Store Manager Dashboard]
-```
-
-### Agentic compliance assistant for EU sustainability reporting
-Carrefour must comply with EU sustainability regulations (CSRD, SFDR, Taxonomy Regulation) across 10+ jurisdictions, each with varying disclosure requirements. This AI agent automates the extraction, validation, and reporting of sustainability data—energy usage, waste metrics, supplier ESG scores—from Carrefour’s internal systems (SAP, IoT sensors, supplier portals). The agent generates draft reports in the required formats (e.g., CSRD’s ESEF XHTML), flags data gaps (e.g., ‘Scope 3 emissions for Supplier X missing’), and suggests corrective actions (e.g., ‘Switch to renewable energy provider Y to meet 2027 targets’). On-prem deployment ensures compliance with EU data sovereignty laws.
-
-**Why this company:** Carrefour’s operations span 10 EU countries, each with distinct sustainability reporting requirements (e.g., France’s Loi PACTE, Germany’s Lieferkettensorgfaltspflichtengesetz). The company’s 2030 AI plan includes ‘efficiency and resilience,’ which extends to compliance overhead. Mistral’s multilingual capabilities and EU data sovereignty align with Carrefour’s needs, while comparable deployments in regulated industries (e.g., banking) report 50% faster reporting cycles and 40% lower compliance costs. For Carrefour, this could save €20M+ annually in external audit fees and internal labor.
-
-**Example input:** `Generate a draft CSRD report for Carrefour France’s 2026 fiscal year, focusing on Scope 3 emissions from suppliers. Flag any suppliers missing ESG data and suggest alternatives with lower carbon footprints.`
-
-**Example output:** {'report': 'CSRD Draft for Carrefour France (FY 2026)', 'scope_3_emissions': {'total': '1.2M tCO2e', 'breakdown': {'upstream_transport': '450K tCO2e', 'purchased_goods': '600K tCO2e', 'waste': '150K tCO2e'}}, 'data_gaps': [{'supplier': 'Fruits de Provence SARL', 'missing_data': 'Scope 1 & 2 emissions, waste metrics', 'risk': 'Non-compliance with CSRD Article 19a (supplier transparency).'}], 'suggestions': [{'action': 'Replace Fruits de Provence with AgriBio France (ESG score: 88/100, 30% lower emissions).', 'rationale': 'AgriBio France provides full ESG data and meets Carrefour’s 2027 carbon reduction targets.'}, {'action': 'Engage Fruits de Provence to complete ESG disclosure by Q3 2026.', 'rationale': 'Short-term mitigation to avoid regulatory penalties.'}], 'compliance_status': 'Draft compliant with CSRD (92% complete). Final review required for missing supplier data.'}
-
-**Blueprint:** `agent_with_tools` (impact: high · cost: medium · complexity: medium · TTV: unknown (no comparable precedent in retail; banking deployments took 18-24 weeks).)
-
-**Top risk:** Hallucination in regulatory output leading to non-compliance (e.g., incorrect emission factor calculations).
-
-**Mistral products:** Mistral Large 3, Mistral Document AI, Mistral Agent, On-prem deployment
-
-**Grounded in:** classification.geography
-_Specificity score: 0.70_
-
-**Architecture blueprint:**
-```mermaid
-graph TD
-    A[Internal Systems
-    (SAP, IoT, Supplier Portals)] --> B[Data Extraction Agent]
-    B --> C[Compliance Engine]
-    C --> D[Report Generator
-    (CSRD/SFDR Formats)]
-    D --> E[Gap Analyzer]
-    E --> F[Corrective Action Suggester]
-    F --> G[On-Prem Deployment]
+flowchart TD
+    A[Ingest Operational Data] --> B[Extract Structured Fields]
+    B --> C[Cross-Reference with ESG Frameworks]
+    C --> D[Flag Anomalies/Gaps]
+    D --> E[Generate Draft Report]
+    E --> F[Human Review]
+    F --> G[Finalize Report]
+    G --> H[Update Internal Dashboards]
 ```
 
 ## Considered but not selected
-- **carrefour_freshness_guardian** — Overlap with existing perishables management systems; lower novelty than dynamic planogram optimization.
-- **carrefour_private_label_product_generator** — Lacks clear data assets (e.g., customer preference data) to train the model effectively.
-- **carrefour_returns_automation_agent** — Lower impact than supply chain or compliance use cases; returns processing is not a stated priority in Carrefour’s 2030 AI plan.
-- **carrefour_localized_promotion_generator** — Feasibility risk: requires granular customer segmentation data, which Carrefour’s existing initiatives do not demonstrate.
+- **carrefour_smart_shelf_anomaly_agent** — Lower feasibility due to dependency on IoT infrastructure maturity; Carrefour’s smart shelf rollout is uneven across regions.
+- **carrefour_waste_reduction_forecasting** — Overlap with existing AI-driven demand forecasting initiatives; lacks clear differentiation from Carrefour’s current tools.
+- **carrefour_instore_personalized_promotions** — High operational complexity; requires real-time integration with smart shelves and mobile apps, which are not yet standardized.
+- **carrefour_omnichannel_inventory_agent** — Lower iconic value; inventory optimization is table stakes for retailers and less aligned with Carrefour’s Food Transition narrative.
 
 ---
 ## Report quality signals
 
-- **Diversity** (avg pairwise cosine distance): `0.13`
-- **Specificity** per use case: `0.90`, `0.80`, `0.70`
-- **Mistral product diversity**: `6` distinct products across the three use cases
-- **Time-to-value spread**: 10–24 weeks (across 3 use cases)
-- **Cost-tier spread**: high, medium, medium
-- **Fact-check pass rate**: `33%` (4/12 claims supported by research)
+- **Topical diversity** (LLM-graded over titles + blueprint patterns): `0.70`
+- **Specificity** per use case: `0.95`, `0.90`, `0.85`
+- **Mistral product diversity**: `5` distinct products across the three use cases
+- **Time-to-value spread**: 12–20 weeks (across 3 use cases)
+- **Cost-tier spread**: medium, medium, high
+- **Fact-check pass rate**: `87%` (13/15 claims supported by research)
 
-**Meta-evaluator confidence**: `0.50` (NOT ready — needs revision)
-**Cross-cutting concern**: All three use cases assume access to granular, real-time internal data (SAP/ERP, smart shelf labels, IoT sensors) without explicit validation of Carrefour's current data infrastructure or integration readiness. The company context lacks details on data assets, tech maturity, or constraints, making these assumptions high-risk.
+**Meta-evaluator confidence**: `0.40` (NOT ready — needs revision)
+**Cross-cutting concern**: Over-reliance on unverified or loosely cited numeric targets and metrics (e.g., CO2 reductions, sales targets) without direct textual support from the cited sources.
+**Duplicate flag**: carrefour_esg_reporting_automation (overlaps with existing ESG reporting automation implied by Carrefour's Sustainability-Linked Bond Framework and DJSI compliance efforts)
