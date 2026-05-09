@@ -426,7 +426,16 @@ For each use case, produce:
   **CRITICAL — example_output is hypothetical/illustrative.** Customers
   reading the report must immediately understand that the numbers, IDs,
   names, and percentages inside `example_output` are SYNTHETIC SAMPLE
-  DATA, not factual claims about the company. Apply at least one of:
+  DATA, not factual claims about the company.
+
+  example_output FORMAT — when the example output is structured (most
+  common case), emit STRICT JSON: double-quoted keys and strings, true
+  / false / null (lowercase) for booleans / nulls. NOT Python-repr
+  (single quotes, True / False / None). The frontend renders structured
+  outputs as a key/value table; Python-repr falls back to a raw code
+  block which is harder to scan.
+
+  Apply at least one of:
     - Begin the JSON or text body with a `"_note": "Illustrative output
       with synthetic sample data"` field at the top level.
     - Use clearly synthetic identifier patterns: `TX-SAMPLE-12345`,
@@ -525,6 +534,26 @@ Numbers and named-entity claims:
     Good: "8-15% non-revenue water reduction has been reported in the
            cited Citylitics precedent." — only if "8-15%" or near figure
            appears verbatim in that precedent.
+- ABSTRACT-PEER ATTRIBUTION RULE (v9 — strengthened) — the peer rule
+  also applies when you DON'T name a specific peer. Phrases like "peer
+  deployments report 12-18%", "comparable retailers have seen 30-50%
+  reductions", "industry peers report material savings of $X" are
+  forbidden UNLESS each named figure is verbatim in the content of a
+  precedent you cite via inspired_by. The previous rule blocked named
+  peers; this round closes the loophole where the model invented
+  specific percentages and attributed them to anonymous "peer
+  deployments" or "industry benchmarks". Without a precedent ID
+  carrying that figure, use qualitative language only.
+    Bad: "Pilot deployments at peer utilities have reported 12-18%
+          reductions in non-revenue water."
+    Bad: "Comparable compliance automation deployments have reduced
+          manual review time by 30-50%."
+    Bad: "Vertical-specific models can outperform general-purpose
+          models by 15-30% on domain tasks."
+    Good: "Pilot deployments at peer utilities have reported material
+          reductions in non-revenue water."
+    Good: "Comparable compliance automation deployments report
+          meaningful reductions in manual review time."
 
 Citation format:
 - For web evidence (anything with a URL): use markdown link
@@ -843,6 +872,21 @@ NOT SUBSTANTIVE (skip from claims list):
   are framing, not facts.
 - Hedged speculation about future state — "this could enable", "this
   would unlock". They're proposals, not assertions about the company.
+- CAPABILITY DESCRIPTIONS OF THE PROPOSED SYSTEM. The fact-check is
+  about the COMPANY-AS-DESCRIBED, not about whether the proposed
+  solution's capabilities are real (they're hypothetical by definition
+  — the system hasn't been built yet). Skip claims phrased as:
+    - "the system can do X" / "the platform flags Y" /
+      "the agent reduces manual review by Z"
+    - "the system uses on-prem deployment" / "deployed on EU-hosted
+      infrastructure" / "leverages multilingual extraction"
+    - Any forward-looking architectural / design choice attributed to
+      the proposed solution rather than to a deployment that already
+      exists.
+  The TEST: would a sales engineer feel comfortable saying this in a
+  customer meeting as a fact about the customer? If yes, extract it.
+  If no — if it's a description of what the proposed system would do
+  once built — skip it.
 
 ILLUSTRATIVE CONTENT IS EXCLUDED FROM FACT-CHECKING:
 - Each use case is presented with a clearly-marked

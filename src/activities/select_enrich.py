@@ -1234,13 +1234,49 @@ async def select_and_enrich_activity(
 
     raw_rej = data.get("rejected_appendix") or []
     rejected: list[RejectedCandidate] = []
+    # Build a set of title-like tokens for the enriched top-3 so we can
+    # de-dup the rejected_appendix. Veolia v8 had "Circular economy
+    # marketplace agent" appearing in BOTH the top-3 AND the appendix —
+    # the LLM included a near-miss version of an already-promoted use
+    # case in its JSON output. Drop any rejected entry whose title
+    # substantially overlaps with a top-3 title.
+    enriched_title_tokens: list[set[str]] = []
+    for uc in enriched:
+        toks = {t.lower() for t in re.findall(r"\b[a-zA-Z]{4,}\b", uc.title or "")}
+        # Strip generic words so e.g. "circular economy marketplace agent"
+        # tokens overlap cleanly with the title's distinctive words.
+        toks -= {"agent", "system", "platform", "tool", "use", "case", "ai", "for"}
+        enriched_title_tokens.append(toks)
+
+    def _is_dup_of_top3(rej_title: str) -> bool:
+        rej_toks = {t.lower() for t in re.findall(r"\b[a-zA-Z]{4,}\b", rej_title or "")}
+        rej_toks -= {"agent", "system", "platform", "tool", "use", "case", "ai", "for"}
+        if not rej_toks:
+            return False
+        for top_toks in enriched_title_tokens:
+            if not top_toks:
+                continue
+            overlap = rej_toks & top_toks
+            # If ≥ 2 distinctive words match (or all tokens match for short
+            # titles), treat as duplicate.
+            if len(overlap) >= 2 or (len(rej_toks) <= 2 and overlap == rej_toks):
+                return True
+        return False
+
     if isinstance(raw_rej, list):
         for r_item in raw_rej:
             if not isinstance(r_item, dict):
                 continue
+            title = str(r_item.get("title", ""))
+            if _is_dup_of_top3(title):
+                logger.info(
+                    "select_enrich: dropping rejected_appendix entry duplicating a top-3 title: %r",
+                    title,
+                )
+                continue
             rejected.append(
                 RejectedCandidate(
-                    title=str(r_item.get("title", "")),
+                    title=title,
                     one_line_reason=str(r_item.get("one_line_reason", "")),
                 )
             )

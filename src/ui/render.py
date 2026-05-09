@@ -223,18 +223,36 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
                 )
             lines.append("")
         if passed:
-            rescued = [c for c in passed if c.rescue_tier]
+            rescued = [c for c in passed if c.rescue_tier and not c.corrected]
+            corrected = [c for c in passed if c.corrected]
             verified_n = sum(1 for c in rescued if c.rescue_tier == "verified")
             corroborated_n = sum(1 for c in rescued if c.rescue_tier == "corroborated")
-            rescue_summary = ""
+            summary_parts: list[str] = []
             if rescued:
-                rescue_summary = (
-                    f" — **{len(rescued)} rescued via web search** "
-                    f"({verified_n} from allowlisted sources, {corroborated_n} corroborated)"
+                summary_parts.append(
+                    f"{len(rescued)} rescued via web search ({verified_n} verified, {corroborated_n} corroborated)"
                 )
+            if corrected:
+                summary_parts.append(
+                    f"{len(corrected)} self-corrected from source"
+                )
+            rescue_summary = f" — **{' · '.join(summary_parts)}**" if summary_parts else ""
             lines.append(f"**Supported ({len(passed)}):**{rescue_summary}")
             for c in passed:
                 src = c.rationale[:140] + "…" if c.rationale and len(c.rationale) > 140 else (c.rationale or "")
+                if c.corrected and c.corrected_value:
+                    # Show the corrected value inline so the reviewer sees
+                    # what the system fixed.
+                    chip = (
+                        f" [`corrected ↗ → {c.corrected_value[:60]}`]({c.rescue_url})"
+                        if c.rescue_url
+                        else f" `[corrected → {c.corrected_value[:60]}]`"
+                    )
+                    reason = c.judge_reason or src
+                    lines.append(
+                        f"- [{c.use_case_id}] {c.claim}{chip} — _{reason[:200]}_"
+                    )
+                    continue
                 tier_badge = ""
                 if c.rescue_tier == "verified" and c.rescue_url:
                     tier_badge = f" [`verified ↗`]({c.rescue_url})"

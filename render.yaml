@@ -6,10 +6,16 @@
 #
 # The standalone Next.js app deploys separately on Vercel (see standalone/
 # README) since Vercel's Next.js detection is best-in-class.
+#
+# Plan note: `free` sleeps after 15min idle and kills SSE long-connections
+# when the service goes to sleep mid-run. For a reliable demo, upgrade
+# to `starter` ($7/mo, always-warm) or `standard` ($25/mo, 2GB RAM) in
+# the Render dashboard. The setting here is the floor — Render's UI
+# choice wins.
 
 services:
   - type: web
-    name: genai-usecase-generator-api
+    name: compastral-api
     runtime: python
     plan: free
     region: frankfurt        # closer to Mistral's EU infra
@@ -30,3 +36,9 @@ services:
         sync: false
       - key: TIER
         value: standard
+      # Lock CORS to the Vercel deployment. Set this in Render's UI to
+      # the Vercel URL (e.g. https://compastral.vercel.app). Falls back
+      # to "*" when unset — fine for local dev / curl, but tighten in
+      # production. Comma-separated for multiple origins.
+      - key: CORS_ORIGINS
+        sync: false

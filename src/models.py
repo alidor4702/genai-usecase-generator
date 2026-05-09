@@ -563,6 +563,17 @@ class FactCheckEntry(BaseModel):
     # whether it's "supported" is moot) but stay visible in the transparency
     # block tagged "[rewritten qualitatively]" so the audit trail is intact.
     qualified_out: bool = False
+    # Set by Step 7d (source-judge) when the snippet contradicted the
+    # claim's specific value but provided a same-fact correction. Judge
+    # returns the corrected_value; pipeline rewrites the prose inline
+    # using that value + attaches the source URL. Claim flips to
+    # passed=True and renders with a `[corrected ↗ original→corrected]`
+    # chip in the transparency block. Restricted to numeric / rank /
+    # temporal facts — entity contradictions stay unsupported because
+    # silent entity-substitution would break downstream prose semantics.
+    corrected: bool = False
+    original_value: str | None = None
+    corrected_value: str | None = None
 
 
 class QualitySignals(BaseModel):

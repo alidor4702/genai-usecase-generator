@@ -248,12 +248,18 @@ async def web_verify_unsupported_claims_activity(
         new_pass = sum(1 for c in all_active_new if c.passed) / max(1, len(all_active_new))
 
         # Re-anchor confidence on the new pass-rate, preserve meta-eval's
-        # qualitative delta. The META_EVALUATION_SYSTEM prompt anchors
-        # confidence to the supported-fraction; if meta-eval saw 60% pass
-        # and produced 0.55, its qualitative delta was -0.05 (cross-cutting
-        # concern penalty etc.). After rescue the new pass-rate becomes the
-        # new anchor; we carry that delta forward unchanged.
-        qual_delta = review.confidence - old_pass
+        # qualitative delta — but CLAMP the delta to bounded influence.
+        # v8 had Mistral 91% pass / 0.55 confidence: meta-eval applied a
+        # -0.36 qualitative penalty for a soft cross-cutting concern that
+        # carried through every chain step and inverted the relationship
+        # between pass-rate and confidence. Clamping to [-0.15, +0.10]
+        # keeps meta-eval's structural judgment in play (a real cross-
+        # cutting concern can still pull confidence down by up to 15
+        # points) while preventing the inversion. Defensible principle:
+        # qualitative judgment has bounded influence on top of the
+        # supported-fraction baseline.
+        qual_delta_raw = review.confidence - old_pass
+        qual_delta = max(-0.15, min(0.10, qual_delta_raw))
         new_confidence = max(0.0, min(1.0, new_pass + qual_delta))
 
         # Rescue-share cap: if rescues are doing >50% of the support work,

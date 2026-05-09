@@ -267,7 +267,11 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
 
         self.current_step = "source_judge"
         self.progress_percent = 92.0
-        review, fact_claims = await judge_claim_sources_activity(review, fact_claims, ledger)
+        review, fact_claims, enriched_uses_post = await judge_claim_sources_activity(
+            review, fact_claims, ledger, enriched_uses
+        )
+        if enriched_uses_post is not None:
+            enriched_uses = enriched_uses_post
 
         self.current_step = "final_qualify"
         self.progress_percent = 94.0

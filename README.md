@@ -282,6 +282,8 @@ The repository also includes a small evaluation harness (`tests/eval/`) with 5-1
 
 ## What I'd add with more time
 
+- **Score self-consistency ablation.** Step 4 currently runs the scoring pass twice — once at T=0.2, once at T=0.4 — and merges. This is a known-good technique for noisy LLM scoring, but its marginal value at this specific step has never been measured on this corpus. Cost is ~18s per run. Post-submission ablation: run all 5 example companies single-pass at T=0.3, compare top-3 selections vs. the two-pass version. If they match >80% of the time, we're paying ~18s × every run for noise. If they diverge, the second pass earns its keep.
+- **Parallelize enrichment per use case.** The single Mistral Large call writes all 3 use cases together so the model has a global view (cross-cutting concern, Mistral product spread, top-risk uniqueness). Splitting into 3 parallel calls would save ~30s but risks losing those global guarantees. Worth measuring with a 5-company A/B before deciding.
 - **Real-time event-driven cache invalidation.** Hook into news APIs to force-refresh research when a company has a major announcement, rather than relying purely on TTLs.
 - **Earnings call and 10-K ingestion.** For public companies, parse recent earnings transcripts and SEC filings to enrich the strategic priorities and existing-initiatives signals.
 - **Multi-language support.** Generate outputs in the language of the company's primary geography (French for Veolia, German for SAP, Spanish for Banco Santander).

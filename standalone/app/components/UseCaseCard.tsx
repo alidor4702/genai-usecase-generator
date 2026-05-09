@@ -46,18 +46,73 @@ type SectionKey =
  * raw `{}`. For plain text we use a softer code-block. Either way it
  * reads as "here's what the user would see", not "here's a debug dump".
  */
+/**
+ * Try to parse `text` as JSON. Returns the parsed value or null. Tolerant
+ * of two LLM-emitted formats:
+ *   1. Real JSON — JSON.parse works directly.
+ *   2. Python-repr dicts (`{'k': 'v', 'b': True, 'n': None}`) — common
+ *      output when the model is "thinking in Python". We convert single
+ *      quotes to double quotes, Python sentinels to JSON sentinels, and
+ *      try again. Conservative: only convert when the input looks
+ *      strictly Python-shaped (starts with `{` or `[`, no unescaped `"`
+ *      mid-string).
+ */
+function tryParseLooseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    // fall through
+  }
+  // Fast-path Python repr: starts with { or [, contains single-quoted
+  // keys/strings, uses Python sentinels.
+  const trimmed = text.trim();
+  if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return null;
+  // Replace Python sentinels with JSON sentinels (whole-word match).
+  let body = trimmed
+    .replace(/\bTrue\b/g, "true")
+    .replace(/\bFalse\b/g, "false")
+    .replace(/\bNone\b/g, "null");
+  // Convert single-quoted strings to double-quoted, escaping any inner
+  // double quotes. State-machine pass: walk chars, flip state on
+  // unescaped single quotes.
+  const out: string[] = [];
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    const prev = i > 0 ? body[i - 1] : "";
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      out.push(ch);
+      continue;
+    }
+    if (ch === "'" && !inDouble && prev !== "\\") {
+      inSingle = !inSingle;
+      out.push('"');
+      continue;
+    }
+    if (inSingle && ch === '"') {
+      // Escape a literal double quote that lived inside a Python-quoted string.
+      out.push('\\"');
+      continue;
+    }
+    out.push(ch);
+  }
+  body = out.join("");
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
+
 function ExampleOutput({ raw }: { raw: string }) {
   const cleaned = raw
     .trim()
-    .replace(/^```(?:json)?\n?/i, "")
+    .replace(/^```(?:json|python)?\n?/i, "")
     .replace(/\n?```$/, "")
     .trim();
-  let parsed: unknown = null;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch {
-    parsed = null;
-  }
+  const parsed = tryParseLooseJson(cleaned);
   if (parsed && typeof parsed === "object") {
     return (
       <div className="bg-mistral-dark/40 border border-mistral-border rounded-lg overflow-hidden">

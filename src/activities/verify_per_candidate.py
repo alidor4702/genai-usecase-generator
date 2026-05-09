@@ -64,15 +64,25 @@ async def _tavily_top_results(client: AsyncTavilyClient, query: str) -> list[dic
 
 
 async def _deep_read_top(http: httpx.AsyncClient, urls: list[str]) -> list[tuple[str, str]]:
-    out: list[tuple[str, str]] = []
-    for url in urls[: settings.tavily_deep_read_top_n]:
-        html = await fetch_html(http, url, timeout_s=12.0)
+    """Deep-read top URLs concurrently. Was sequential pre-v9 — that was
+    the choke that staggered per-candidate verify verdicts across ~5s of
+    wall clock. asyncio.gather brings the deep-read step from sum-of-fetches
+    down to max-of-fetches.
+    """
+    targets = urls[: settings.tavily_deep_read_top_n]
+
+    async def _one(url: str) -> tuple[str, str] | None:
+        try:
+            html = await fetch_html(http, url, timeout_s=12.0)
+        except Exception:
+            return None
         if html is None:
-            continue
+            return None
         text = extract_main_text(html, max_chars=6000)
-        if text:
-            out.append((url, text))
-    return out
+        return (url, text) if text else None
+
+    results = await asyncio.gather(*(_one(u) for u in targets))
+    return [r for r in results if r is not None]
 
 
 async def _verify_one(

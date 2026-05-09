@@ -1,8 +1,5 @@
 {
   "buildCommand": "npm run build",
   "framework": "nextjs",
-  "installCommand": "npm install",
-  "env": {
-    "API_URL": "@api_url"
-  }
+  "installCommand": "npm install"
 }

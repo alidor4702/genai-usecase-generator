@@ -35,15 +35,11 @@ from src.activities.research import (
 )
 from src.activities.retrieve import retrieve_precedents_activity
 from src.activities.score import score_candidates_activity
-from src.activities.select_enrich import (
-    regen_one_use_case_activity,
-    select_and_enrich_activity,
-)
+from src.activities.select_enrich import select_and_enrich_activity
 from src.activities.verify_per_candidate import verify_top_candidates_activity
 from src.config import settings
 from src.models import (
     EvidenceLedger,
-    RejectedCandidate,
     Report,
     WorkflowInput,
 )
@@ -176,73 +172,15 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
         review.weakest_use_case_id,
     )
 
-    # Step 7b — Targeted regen on low confidence (skipped on fast tier)
-    original_confidence = review.confidence
-    regenerated_use_case_id: str | None = None
-    if (
-        settings.tier.value != "fast"
-        and review.confidence < settings.meta_eval_confidence_threshold
-        and review.weakest_use_case_id
-    ):
-        log.info(
-            "=== Step 7b: Regeneration (weakest use case = %s) ===",
-            review.weakest_use_case_id,
-        )
-        weak_id = review.weakest_use_case_id
-        weak_idx = next((i for i, u in enumerate(enriched_uses) if u.id == weak_id), None)
-        in_top_3 = {u.id for u in enriched_uses}
-        replacement_sc = next(
-            (sc for sc in scored.scored if sc.candidate.id not in in_top_3),
-            None,
-        )
-        if weak_idx is not None and replacement_sc is not None:
-            replacement_enriched = await regen_one_use_case_activity(
-                weakest_id=weak_id,
-                replacement=replacement_sc,
-                ctx=ctx,
-                retrieved=retrieved,
-                ledger=ledger,
-                weakness_reason=review.weakness_reason,
-            )
-            if replacement_enriched is not None:
-                new_uses = list(enriched_uses)
-                dropped_uc = new_uses[weak_idx]
-                # Defensive: if regen returned essentially the same content
-                # as what we dropped (the LLM "fixing" by re-emitting), the
-                # 2nd meta-eval will produce the same result. Skip it and
-                # keep the original — saves ~9s.
-                desc_old = (dropped_uc.description or "").strip()
-                desc_new = (replacement_enriched.description or "").strip()
-                if desc_old and desc_old == desc_new:
-                    log.info(
-                        "regen: produced identical description to dropped use case, "
-                        "skipping 2nd meta-eval and keeping original"
-                    )
-                else:
-                    new_uses[weak_idx] = replacement_enriched
-                    new_rejected = list(rejected) + [
-                        RejectedCandidate(
-                            title=dropped_uc.title,
-                            one_line_reason="Replaced by regen — meta-eval flagged as weakest.",
-                        )
-                    ]
-                    review2, fact_claims2 = await meta_evaluate_activity(
-                        new_uses, new_rejected, ctx, retrieved=retrieved, ledger=ledger
-                    )
-                    log.info(
-                        "regen result: confidence %.2f → %.2f | ready=%s",
-                        original_confidence,
-                        review2.confidence,
-                        review2.sales_engineer_ready,
-                    )
-                    if review2.confidence > original_confidence:
-                        enriched_uses = new_uses
-                        rejected = new_rejected
-                        review = review2
-                        fact_claims = fact_claims2
-                        regenerated_use_case_id = replacement_sc.candidate.id
-                    else:
-                        log.info("regen did not improve confidence, keeping original")
+    # Step 7b — Targeted regen DEPRECATED in v9. The web-verify rescue +
+    # source-judge + final-qualify chain (steps 7c–7e) now handles the
+    # fact-check class of issues that regen used to cover, without
+    # rewriting an entire use case. Trace data showed the 2nd meta-eval
+    # after regen rarely beat the first by >0.05 (noise, not signal),
+    # and the regen step burned ~50s per run. Removed entirely; the v7
+    # chain does the same job better and more transparently.
+    original_confidence = review.confidence  # kept for downstream logging
+    regenerated_use_case_id: str | None = None  # always None in v9
 
     # Step 7c — Web-verify rescue: rescue claims the meta-eval flagged
     # unsupported but are real and verifiable from public sources. Two-tier
@@ -258,9 +196,11 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
     # entities). False positives flip back to passed=False with a
     # judge_rejected flag so the report renders the rejection chain.
     log.info("=== Step 7d: Source judge ===")
-    review, fact_claims = await judge_claim_sources_activity(
-        review, fact_claims, ledger
+    review, fact_claims, enriched_uses_post = await judge_claim_sources_activity(
+        review, fact_claims, ledger, enriched_uses
     )
+    if enriched_uses_post is not None:
+        enriched_uses = enriched_uses_post
 
     # Step 7e — Final qualitative replacement. Numbers + named entities the
     # whole verify chain (pool → web-verify → judge) couldn't anchor get
@@ -280,15 +220,19 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
     if in_scope:
         new_pass = sum(1 for c in in_scope if c.passed) / len(in_scope)
         # The previous review.confidence carries meta-eval's + web_verify's
-        # + judge's adjustments; keep their delta-from-pass-rate intact.
+        # + judge's adjustments; clamp their net delta to bounded influence
+        # (same rule as web_verify / source_judge) so the qualified-out
+        # exclusion doesn't accidentally widen the penalty into the
+        # inversion zone.
         prev_pass = sum(1 for c in fact_claims if c.passed) / max(1, len(fact_claims))
-        qual_delta = review.confidence - prev_pass
+        qual_delta_raw = review.confidence - prev_pass
+        qual_delta = max(-0.15, min(0.10, qual_delta_raw))
         review = review.model_copy(
             update={"confidence": max(0.0, min(1.0, new_pass + qual_delta))}
         )
         log.info(
-            "post-qualify: pass-rate (in-scope) %.2f, confidence → %.2f",
-            new_pass, review.confidence,
+            "post-qualify: pass-rate (in-scope) %.2f, qual_delta=%+.2f (raw %+.2f), confidence → %.2f",
+            new_pass, qual_delta, qual_delta_raw, review.confidence,
         )
 
     # Quality signals

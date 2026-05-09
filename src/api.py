@@ -135,10 +135,18 @@ app = FastAPI(
     ),
 )
 
-# Permissive CORS for local dev. Tighten for production deploy.
+# CORS — driven by CORS_ORIGINS env var (comma-separated) so deployment
+# can lock to the Vercel frontend URL. Local dev with no env var falls
+# back to "*" so curl + npm-dev work without ceremony.
+import os as _os  # local import keeps the top-of-file imports tidy
+_cors_env = _os.environ.get("CORS_ORIGINS", "").strip()
+_cors_origins: list[str] = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else ["*"]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=False,  # cookie-free FE; CORS_ORIGINS=["*"] requires this False
     allow_methods=["*"],
     allow_headers=["*"],
 )
