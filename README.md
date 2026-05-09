@@ -273,6 +273,13 @@ Every run surfaces measurable quality signals in the output metadata footer:
 
 The repository also includes a small evaluation harness (`tests/eval/`) with 5-10 hand-graded gold examples covering multiple industries. An LLM-as-judge graded against these examples is run on every prompt change to catch regressions. This follows Anthropic's small-sample evaluation principle.
 
+## Known limitations
+
+- **AI-vendor-as-target produces tautological proposals.** When the target company is itself an AI/LLM provider — Mistral AI, OpenAI, Anthropic — the system frames use cases as "X could deploy Y for itself" which is structurally tautological. The pipeline was designed for companies *adopting* AI, not building it. v6 Mistral AI run lands at specificity 0.50 across all three because the proposals describe Mistral's existing products (Forge, fine-tuning SDK, multilingual devrel). For a v7 fix this could be a prompt branch ("if target is itself an AI/LLM company, frame as internal applications"), but the cleaner answer is "this isn't the system's target market" — most customers in the Mistral Proto Team's pipeline are not AI vendors.
+- **Precedent corpus is closed (~2150 deployments).** Every `inspired_by` reference must live in `data/precedents_raw.jsonl`. If a relevant peer deployment isn't in the corpus, the model anchors on a weaker match or skips the citation. Free-text "comparable to Sephora's rollout" is allowed (with the v6 quantitative-attribution rule) so this doesn't block grounding, but it does mean retrieval has narrower recall than a full-web search would.
+- **Tier-2 corroborated rescues use regex anchor matching.** v6 web-verify promotes a non-allowlist source if its body contains a number or capitalised entity from the claim. v7 source-judge is the corrective layer (LLM reads the snippet and decides), but if the LLM judge call fails (transient API error), the system fails open and keeps the corroboration.
+- **`current_step` in the FastAPI standalone-app surface is set once at run start.** `state.current_step` is initialised when the run kicks off and never updated during pipeline execution — the live UI derives the current step from the latest trace event instead. The Mistral Workflows class (`src/workflow.py`) updates `self.current_step` correctly per phase; it's only the `src/api.py` direct-pipeline path that holds it constant. Acceptable because the trace stream is the source of truth for the UI.
+
 ## What I'd add with more time
 
 - **Real-time event-driven cache invalidation.** Hook into news APIs to force-refresh research when a company has a major announcement, rather than relying purely on TTLs.

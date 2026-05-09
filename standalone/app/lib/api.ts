@@ -49,9 +49,70 @@ export type TraceEvent = {
   running?: boolean;
 };
 
+// Subset of the backend Report we actually consume in the UI. Backend may
+// include more fields; we type only what the cards / footer renders.
+export type TimeToValue = {
+  estimate: string;
+  anchored_to: string[];
+  basis: "precedent" | "ballpark_assumption" | "unknown";
+  rationale?: string | null;
+};
+
+export type EnrichedUseCase = {
+  id: string;
+  title: string;
+  description: string;
+  why_this_company: string;
+  example_input: string;
+  example_output: string;
+  suggested_mistral_products: string[];
+  blueprint_pattern:
+    | "rag"
+    | "agent_with_tools"
+    | "document_ai_pipeline"
+    | "fine_tuned_domain"
+    | "hybrid_retrieval";
+  blueprint_mermaid: string;
+  time_to_value: TimeToValue;
+  operating_cost_tier: "low" | "medium" | "high" | "unknown";
+  impact_tier: "low" | "medium" | "high";
+  complexity_tier: "low" | "medium" | "high";
+  top_implementation_risk: string;
+  inspired_by: string[];
+  grounded_in: string[];
+  evidence_ids: string[];
+  builds_on_existing?: boolean;
+  builds_on_note?: string | null;
+};
+
+export type FactCheckEntry = {
+  claim: string;
+  use_case_id: string;
+  passed: boolean;
+  rationale: string | null;
+  rescue_tier?: "verified" | "corroborated" | null;
+  rescue_url?: string | null;
+  judge_rejected?: boolean;
+  judge_reason?: string | null;
+};
+
+export type Report = {
+  company: { identity: { name: string }; classification: { industry: string } };
+  use_cases: EnrichedUseCase[];
+  quality: {
+    diversity: number;
+    specificity_per_use_case: number[];
+    fact_check: FactCheckEntry[];
+  };
+  meta_review?: {
+    confidence: number;
+    sales_engineer_ready: boolean;
+  };
+};
+
 export type ReportResponse = {
   run_id: string;
-  report: unknown;
+  report: Report;
   markdown: string;
 };
 

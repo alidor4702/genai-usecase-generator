@@ -1,26 +1,26 @@
 "use client";
 import { useState } from "react";
 import type { TraceEvent } from "../lib/api";
+import PhaseIcon from "./PhaseIcon";
 import { STEP_DISPLAY, actorBadge } from "./stepMeta";
 
 /**
- * One agent action. Shows step-typed icon + friendly title + actor +
- * one-line summary. Click the chevron to expand the raw inputs/outputs
- * the activity received and produced.
+ * One agent action. Shows the phase glyph + friendly title + actor +
+ * one-line summary. Click the chevron to expand the raw inputs/outputs.
  */
 export default function ActivityCard({ event, index }: { event: TraceEvent; index: number }) {
   const [open, setOpen] = useState(false);
   const meta = STEP_DISPLAY[event.step] ?? {
     title: event.action,
     verb: "",
-    emoji: "•",
     tone: "from-slate-500/20 to-slate-500/0",
   };
 
   // `running` is the explicit flag set by the SSE merge logic (step_start →
   // running, step_complete → !running). `duration_ms === null` is a fallback
   // for legacy events without an id that never receive a separate complete.
-  const inFlight = event.running === true || (event.running === undefined && event.duration_ms === null);
+  const inFlight =
+    event.running === true || (event.running === undefined && event.duration_ms === null);
   const ts = new Date(event.started_at).toLocaleTimeString(undefined, {
     hour: "2-digit",
     minute: "2-digit",
@@ -46,9 +46,9 @@ export default function ActivityCard({ event, index }: { event: TraceEvent; inde
       )}
       <div className="relative flex items-start gap-3">
         <div
-          className={`shrink-0 w-9 h-9 rounded-full bg-gradient-to-br ${meta.tone} flex items-center justify-center text-lg`}
+          className={`shrink-0 w-9 h-9 rounded-md bg-gradient-to-br ${meta.tone} flex items-center justify-center text-white`}
         >
-          {meta.emoji}
+          <PhaseIcon step={event.step} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
@@ -65,6 +65,12 @@ export default function ActivityCard({ event, index }: { event: TraceEvent; inde
                   · {(event.duration_ms / 1000).toFixed(1)}s
                 </span>
               )}
+              {inFlight && (
+                <span className="ml-1.5 inline-flex items-center gap-1 text-mistral-orangeBright">
+                  <span className="w-1.5 h-1.5 rounded-full bg-mistral-orange animate-pulse" />
+                  running
+                </span>
+              )}
             </span>
           </div>
           {event.outputs_summary && (
@@ -73,7 +79,7 @@ export default function ActivityCard({ event, index }: { event: TraceEvent; inde
             </div>
           )}
           {event.error && (
-            <div className="text-xs text-bad mt-0.5">⚠ {event.error}</div>
+            <div className="text-xs text-bad mt-0.5">! {event.error}</div>
           )}
           {(event.inputs_summary || event.outputs_summary) && (
             <button

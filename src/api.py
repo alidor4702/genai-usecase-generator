@@ -264,10 +264,17 @@ async def events(run_id: str) -> StreamingResponse:
                         )
                         yield f"event: step_complete\ndata: {payload}\n\n".encode("utf-8")
                         completed_emitted.add(ev.id)
-            # Emit step + progress every poll so the UI can render a progress bar
+            # Emit step + progress every poll so the UI can render a progress
+            # bar. Derive `step` from the latest trace event when possible —
+            # state.current_step is set once at run start (api.py runs the
+            # pipeline directly, not the workflow class, so nothing updates
+            # it during execution).
+            live_step = state.current_step
+            if state.trace is not None and state.trace.events:
+                live_step = state.trace.events[-1].step
             yield (
                 f"event: progress\ndata: "
-                f'{{"step":"{state.current_step}","progress":{state.progress_percent}}}\n\n'
+                f'{{"step":"{live_step}","progress":{state.progress_percent}}}\n\n'
             ).encode("utf-8")
             if state.status in ("completed", "failed", "refused"):
                 yield f"event: done\ndata: {state.status}\n\n".encode("utf-8")

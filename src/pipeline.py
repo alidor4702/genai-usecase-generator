@@ -24,7 +24,9 @@ from dataclasses import dataclass
 
 from src.activities.compute_signals import compute_quality_signals_activity
 from src.activities.generate import generate_candidates_activity
+from src.activities.final_qualify import final_qualitative_replacement_activity
 from src.activities.meta_evaluate import meta_evaluate_activity
+from src.activities.source_judge import judge_claim_sources_activity
 from src.activities.web_verify import web_verify_unsupported_claims_activity
 from src.activities.research import (
     enrich_company_context_activity,
@@ -249,6 +251,23 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
     review, fact_claims, ledger = await web_verify_unsupported_claims_activity(
         review, fact_claims, ctx.identity.name, ledger
     )
+
+    # Step 7d — Final-render-gate source judge: for every claim still
+    # passed=True with a resolvable supporting URL, an LLM judge checks
+    # the source actually supports the claim (vs. just containing related
+    # entities). False positives flip back to passed=False with a
+    # judge_rejected flag so the report renders the rejection chain.
+    log.info("=== Step 7d: Source judge ===")
+    review, fact_claims = await judge_claim_sources_activity(
+        review, fact_claims, ledger
+    )
+
+    # Step 7e — Final qualitative replacement. Numbers + named entities the
+    # whole verify chain (pool → web-verify → judge) couldn't anchor get
+    # rewritten qualitatively in the prose so the report doesn't read like
+    # it's asserting fabricated facts.
+    log.info("=== Step 7e: Final qualitative replacement ===")
+    enriched_uses = await final_qualitative_replacement_activity(enriched_uses, fact_claims)
 
     # Quality signals
     log.info("=== Quality signals ===")

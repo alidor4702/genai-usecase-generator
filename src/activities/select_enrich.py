@@ -261,6 +261,54 @@ def filter_and_promote(
             appendix.append(sc)
         if len(final) == k and len(appendix) >= 4:
             break
+
+    # Near-dup swap: the generator self-marks `near_dup_of` when two
+    # candidates address substantially the same workflow / data asset /
+    # user persona / value chain stage. If the chosen top-k contains both
+    # members of a near-dup pair, drop the lower-scored member and pull
+    # the next non-linked candidate from the appendix. Avoids the
+    # Carrefour-style "two sustainability variants in the top 3" outcome
+    # without forcing arbitrary domain diversity.
+    final_ids = {sc.candidate.id for sc in final}
+    swapped = 0
+    while True:
+        # Find a near-dup pair within `final`
+        dup_pair: tuple[int, int] | None = None
+        for i, sc_i in enumerate(final):
+            link = sc_i.candidate.near_dup_of
+            if not link or link not in final_ids:
+                continue
+            j = next((idx for idx, sc_j in enumerate(final) if sc_j.candidate.id == link), None)
+            if j is None or i == j:
+                continue
+            dup_pair = (i, j) if final[i].aggregate_score < final[j].aggregate_score else (j, i)
+            break
+        if dup_pair is None:
+            break
+        drop_idx, _keep_idx = dup_pair
+        dropped = final[drop_idx]
+        # Pick the next appendix candidate that isn't linked to anyone still in `final`.
+        replacement_idx = None
+        for ai, sc_app in enumerate(appendix):
+            if sc_app.candidate.id in confirmed_ids:
+                continue
+            link = sc_app.candidate.near_dup_of
+            if link and link in (final_ids - {dropped.candidate.id}):
+                continue
+            replacement_idx = ai
+            break
+        if replacement_idx is None:
+            break  # nothing safe to swap in; leave the dup pair in place
+        replacement = appendix.pop(replacement_idx)
+        appendix.append(dropped)
+        final[drop_idx] = replacement
+        final_ids = {sc.candidate.id for sc in final}
+        swapped += 1
+        if swapped >= 3:  # belt-and-braces: avoid infinite loops on pathological linking
+            break
+
+    if swapped:
+        logger.info("filter_and_promote: swapped %d near-dup candidate(s) out of top-3", swapped)
     return final, appendix, verdict_by_id
 
 
@@ -503,13 +551,22 @@ Transformations to apply, IN ORDER:
    ALSO add the ledger entry's `evidence_id` to the `cited_evidence_ids`
    field in your output (a flat list of ev-IDs you newly cited).
 
-   STEP 3 — IF NOT FOUND anywhere in the pool, replace the specific number
-   with qualitative language. Examples:
-     - "reduces audit time by [unanchored: 30%]" → "reduces audit time
-       materially"
-     - "$[unanchored: 4M] in fines" → "significant compliance fines"
-     - "1.5B+ active devices" (and pool has no support) → "a billion-scale
-       active device base"
+   STEP 3 — IF NOT FOUND in the pool, KEEP THE NUMBER AS-IS (drop the
+   `[unanchored:]` wrapper but DO NOT replace with qualitative language).
+   The number flows through to the downstream verification chain:
+   meta-eval extracts it as a substantive claim, web-verify runs a Tavily
+   search if the pool didn't anchor it, and a source-judge decides
+   whether any retrieved source actually supports it. ONLY if that whole
+   chain still finds no support will a separate final-render step rewrite
+   the prose qualitatively.
+     - "reduces audit time by [unanchored: 30%]" → "reduces audit time by
+       30%" (keep the number, drop the bracket — verification chain decides)
+     - "$[unanchored: 4M] in fines" → "$4M in fines"
+     - "1.5B+ active devices" (already plain, no bracket) → leave as-is
+   Polish's job is to render clean prose, NOT to pre-strip unverified
+   numbers. v6 over-stripped real numbers (e.g. Carrefour's 14k stores,
+   L'Oréal's 10 PB) because polish ran before the verification chain had
+   a chance. v7 lets every number reach the verifier first.
 
    When a specific number IS already anchored in-sentence (precedent
    reference, markdown link to a ledger URL), KEEP IT and don't touch it.

@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import UseCaseCard from "./components/UseCaseCard";
+import type { Report } from "./lib/api";
 import {
   postGenerate,
   getStatus,
@@ -17,6 +19,7 @@ import StepIndicator from "./components/StepIndicator";
 import ActivityCard from "./components/ActivityCard";
 import LiveStats from "./components/LiveStats";
 import MermaidDiagram from "./components/MermaidDiagram";
+import SiteNav from "./components/SiteNav";
 import { progressForStep } from "./components/stepMeta";
 
 type Phase = "form" | "running" | "completed" | "refused" | "failed";
@@ -39,6 +42,7 @@ export default function Page() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [events, setEvents] = useState<TraceEvent[]>([]);
   const [reportMd, setReportMd] = useState<string | null>(null);
+  const [reportData, setReportData] = useState<Report | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -51,6 +55,7 @@ export default function Page() {
     setErrorMsg(null);
     setEvents([]);
     setReportMd(null);
+    setReportData(null);
     setStatus(null);
     setProgress(2);
     setCurrentStep("starting");
@@ -85,7 +90,10 @@ export default function Page() {
           setProgress((cur) => Math.max(cur, progressForStep(ev.step)));
         },
         (p) => {
-          setCurrentStep(p.step);
+          // Don't take currentStep from the progress event — api.py sets
+          // state.current_step once at run start and never updates it,
+          // so this would clobber the (correct) currentStep we get from
+          // trace events. Progress percent is fine to use.
           setProgress((cur) => Math.max(cur, p.progress));
         },
         async (finalStatus) => {
@@ -95,6 +103,7 @@ export default function Page() {
             if (finalStatus === "completed") {
               const r = await getReport(run_id);
               setReportMd(r.markdown);
+              setReportData(r.report);
               setProgress(100);
               setPhase("completed");
             } else if (finalStatus === "refused") {
@@ -122,6 +131,7 @@ export default function Page() {
     setStatus(null);
     setEvents([]);
     setReportMd(null);
+    setReportData(null);
     setErrorMsg(null);
     setProgress(0);
     setCurrentStep("starting");
@@ -132,6 +142,7 @@ export default function Page() {
     <>
       <AnimatedBackground />
       <main className="relative z-10 min-h-screen px-4 sm:px-8 py-10 max-w-6xl mx-auto">
+        <SiteNav />
         <Hero phase={phase} companyName={companyName} status={status} progress={progress} />
 
         {phase === "form" && (
@@ -159,6 +170,7 @@ export default function Page() {
             startedAt={startedAt}
             status={status}
             reportMd={reportMd}
+            reportData={reportData}
             errorMsg={errorMsg}
             onReset={reset}
           />
@@ -244,11 +256,11 @@ function FormView({
   onSubmit: () => void;
 }) {
   const SUGGESTIONS = ["Carrefour", "BNP Paribas", "L'Oréal", "Veolia", "Mistral AI"] as const;
-  const FOCUS_OPTIONS: { value: FocusArea; label: string; desc: string; emoji: string }[] = [
-    { value: "general", label: "General", desc: "Balanced across surfaces", emoji: "🎯" },
-    { value: "operations", label: "Operations", desc: "Supply chain · ops · cost", emoji: "⚙️" },
-    { value: "customer", label: "Customer", desc: "Personalisation · CX", emoji: "💬" },
-    { value: "sustainability", label: "Sustainability", desc: "ESG · compliance · CSR", emoji: "🌱" },
+  const FOCUS_OPTIONS: { value: FocusArea; label: string; desc: string }[] = [
+    { value: "general", label: "General", desc: "Balanced across surfaces" },
+    { value: "operations", label: "Operations", desc: "Supply chain · ops · cost" },
+    { value: "customer", label: "Customer", desc: "Personalisation · CX" },
+    { value: "sustainability", label: "Sustainability", desc: "ESG · compliance · CSR" },
   ];
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey && companyName.trim()) {
@@ -318,11 +330,16 @@ function FormView({
                     : "border-mistral-border hover:border-mistral-orange/40 bg-mistral-dark/40"
                 }`}
               >
-                <div className="flex items-center gap-1.5 text-sm font-semibold text-white">
-                  <span>{o.emoji}</span>
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <span
+                    className={`w-1.5 h-4 rounded-sm transition-colors ${
+                      active ? "bg-mistral-orange" : "bg-mistral-border"
+                    }`}
+                    aria-hidden
+                  />
                   <span>{o.label}</span>
                 </div>
-                <div className="text-[11px] text-ink-secondary mt-0.5">{o.desc}</div>
+                <div className="text-[11px] text-ink-secondary mt-1 ml-3.5">{o.desc}</div>
               </button>
             );
           })}
@@ -402,7 +419,7 @@ function FormView({
 /* ─────────────────────────  Run view  ───────────────────────── */
 
 function RunView({
-  phase, runId, events, currentStep, startedAt, status, reportMd, errorMsg, onReset,
+  phase, runId, events, currentStep, startedAt, status, reportMd, reportData, errorMsg, onReset,
 }: {
   phase: Phase;
   runId: string | null;
@@ -411,6 +428,7 @@ function RunView({
   startedAt: string | null;
   status: StatusResponse | null;
   reportMd: string | null;
+  reportData: Report | null;
   errorMsg: string | null;
   onReset: () => void;
 }) {
@@ -474,9 +492,68 @@ function RunView({
         </div>
       </section>
 
-      {reportMd && <ReportRender markdown={reportMd} />}
+      {reportData && (
+        <section className="space-y-4">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-sm uppercase tracking-[0.18em] text-ink-secondary font-bold">
+              Generated use cases
+            </h2>
+            <span className="text-xs text-ink-muted">
+              {reportData.use_cases.length} customer-ready proposals
+            </span>
+          </div>
+          <div className="space-y-4">
+            {reportData.use_cases.map((uc, i) => (
+              <UseCaseCard key={uc.id} uc={uc} index={i} />
+            ))}
+          </div>
+        </section>
+      )}
+      {/* When we have structured data, hide the use-case section from the
+          markdown rendering (cards above already cover it). The footer —
+          quality signals + fact-check transparency block — still renders. */}
+      {reportMd && (
+        <ReportRender
+          markdown={reportData ? stripUseCaseSection(reportMd) : reportMd}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * Strip the H2 section that contains the per-use-case prose (already
+ * rendered above as cards). Backend emits "## Use cases" or
+ * "## The three use cases" or similar — we match any H2 between the intro
+ * and the next H2 that contains H3 use case headers, and remove it.
+ */
+function stripUseCaseSection(md: string): string {
+  // The backend's render path ALWAYS emits exactly one H2 block of
+  // use cases followed by their H3s. Find the first H2 whose body
+  // contains H3 entries, strip that H2 + everything until the next H2.
+  const lines = md.split("\n");
+  let inUseCaseBlock = false;
+  let dropping = false;
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("## ")) {
+      // Next H2 always ends a use case block we were dropping.
+      if (dropping) dropping = false;
+      // Decide whether THIS H2 is a use-case block by looking ahead for an
+      // H3 within the next ~40 lines (use cases are H3 children).
+      const lookahead = lines.slice(i + 1, i + 40).join("\n");
+      if (/^### /m.test(lookahead) && /use case/i.test(line)) {
+        inUseCaseBlock = true;
+        dropping = true;
+        continue;
+      }
+    }
+    if (dropping) continue;
+    out.push(line);
+    void inUseCaseBlock;
+  }
+  return out.join("\n");
 }
 
 /* ─────────────────────────  Report renderer  ───────────────────────── */

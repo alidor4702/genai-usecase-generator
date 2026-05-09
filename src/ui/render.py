@@ -193,8 +193,13 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
             lines.append(f"**Unsupported ({len(failed)}):**")
             for c in failed:
                 rationale = c.rationale or "no source contained directly-supporting text"
+                judge_chip = ""
+                if c.judge_rejected:
+                    judge_chip = " `[judge: rejected]`"
+                    if c.judge_reason:
+                        rationale = f"{c.judge_reason} (was: {rationale[:120]})"
                 lines.append(
-                    f"- [{c.use_case_id}] {c.claim} — _{rationale[:200]}_"
+                    f"- [{c.use_case_id}] {c.claim}{judge_chip} — _{rationale[:240]}_"
                 )
             lines.append("")
         if passed:

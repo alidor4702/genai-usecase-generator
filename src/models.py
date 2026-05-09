@@ -387,6 +387,11 @@ class Candidate(BaseModel):
     # EvidenceLedger entry IDs (e.g. "ev-a1b2c3d4") that the generator pulled
     # via the web_search tool and used to anchor concrete claims.
     evidence_ids: list[str] = Field(default_factory=list)
+    # Generator self-marks a sibling candidate when this one shares
+    # workflow / data asset / user persona / value chain stage with another
+    # candidate in the same batch. Top-3 selection swaps a lower-scored
+    # near_dup out for the next non-linked candidate from the appendix.
+    near_dup_of: str | None = None
 
 
 class CandidateBatch(BaseModel):
@@ -529,6 +534,13 @@ class FactCheckEntry(BaseModel):
     use_case_id: str
     passed: bool
     rationale: str | None = None
+    # source_kind / source_url carry where the meta-eval said the claim is
+    # supported from. The final-render-gate judge uses them to verify the
+    # source actually backs the claim (vs. just containing related entities).
+    # source_kind values mirror the META_EVALUATION_SYSTEM rubric:
+    #   "evidence:<ev-id>" | "precedent:<id>" | "company_context.<field>" | None
+    source_kind: str | None = None
+    source_url: str | None = None
     # Set by the post-meta-eval web-verify rescue layer when a claim was
     # promoted from passed=False → passed=True via a fresh Tavily search.
     # "verified"     — source was on the curated allowlist (company-official,
@@ -538,6 +550,12 @@ class FactCheckEntry(BaseModel):
     #                  rescue happened.
     rescue_tier: Literal["verified", "corroborated"] | None = None
     rescue_url: str | None = None
+    # Set by the final-render-gate judge when it inspected the (claim, source)
+    # pair and decided the source does NOT support the claim. The claim flips
+    # back to passed=False; this field carries the judge's reason for the
+    # transparency block.
+    judge_rejected: bool = False
+    judge_reason: str | None = None
 
 
 class QualitySignals(BaseModel):

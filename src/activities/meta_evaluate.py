@@ -245,15 +245,30 @@ async def meta_evaluate_activity(
     raw_claims = data.get("claims") or []
     claims: list[FactCheckEntry] = []
     if isinstance(raw_claims, list):
+        # Ledger lookup so we can resolve "evidence:<ev-id>" → real URL for
+        # the downstream source-judge step.
+        ledger_url_by_id: dict[str, str] = {}
+        if ledger is not None:
+            for ent in ledger.entries:
+                if ent.url:
+                    ledger_url_by_id[ent.id] = ent.url
         for c in raw_claims:
             if not isinstance(c, dict):
                 continue
+            source_kind = c.get("source_kind")
+            source_kind = str(source_kind) if isinstance(source_kind, str) else None
+            source_url: str | None = None
+            if source_kind and source_kind.startswith("evidence:"):
+                ev_id = source_kind.split(":", 1)[1].strip()
+                source_url = ledger_url_by_id.get(ev_id)
             claims.append(
                 FactCheckEntry(
                     claim=str(c.get("claim", "")),
                     use_case_id=str(c.get("use_case_id", "")),
                     passed=bool(c.get("supported", c.get("passed", False))),
                     rationale=c.get("supporting_signal") or c.get("rationale"),
+                    source_kind=source_kind,
+                    source_url=source_url,
                 )
             )
     logger.info(

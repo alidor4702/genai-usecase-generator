@@ -55,7 +55,9 @@ with _temporal_workflow.unsafe.imports_passed_through():
     )
     from src.activities.retrieve import retrieve_precedents_activity
     from src.activities.score import score_candidates_activity
+    from src.activities.final_qualify import final_qualitative_replacement_activity
     from src.activities.select_enrich import select_and_enrich_activity
+    from src.activities.source_judge import judge_claim_sources_activity
     from src.activities.verify_per_candidate import verify_top_candidates_activity
     from src.activities.web_verify import web_verify_unsupported_claims_activity
     from src.config import settings
@@ -258,13 +260,21 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         )
 
         self.current_step = "web_verify"
-        self.progress_percent = 91.0
+        self.progress_percent = 90.0
         review, fact_claims, ledger = await web_verify_unsupported_claims_activity(
             review, fact_claims, ctx.identity.name, ledger
         )
 
+        self.current_step = "source_judge"
+        self.progress_percent = 92.0
+        review, fact_claims = await judge_claim_sources_activity(review, fact_claims, ledger)
+
+        self.current_step = "final_qualify"
+        self.progress_percent = 94.0
+        enriched_uses = await final_qualitative_replacement_activity(enriched_uses, fact_claims)
+
         self.current_step = "quality_signals"
-        self.progress_percent = 93.0
+        self.progress_percent = 96.0
         signals = await compute_quality_signals_activity(enriched_uses, ctx, fact_claims)
 
         # Note: targeted regeneration of the weakest use case on low confidence is

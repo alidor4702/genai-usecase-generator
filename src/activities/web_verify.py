@@ -240,17 +240,38 @@ async def web_verify_unsupported_claims_activity(
     if rescued > 0:
         old_pass = sum(1 for c in claims if c.passed) / max(1, len(claims))
         new_pass = sum(1 for c in new_claims if c.passed) / max(1, len(new_claims))
-        delta = new_pass - old_pass
-        # Bump confidence by the recall improvement, capped at +0.10. The
-        # claim-list ratio is the source of truth per META_EVALUATION_SYSTEM,
-        # so this keeps the review honest.
-        bumped = min(1.0, review.confidence + min(0.10, delta))
-        review = review.model_copy(update={"confidence": bumped})
+
+        # Re-anchor confidence on the new pass-rate, preserve meta-eval's
+        # qualitative delta. The META_EVALUATION_SYSTEM prompt anchors
+        # confidence to the supported-fraction; if meta-eval saw 60% pass
+        # and produced 0.55, its qualitative delta was -0.05 (cross-cutting
+        # concern penalty etc.). After rescue the new pass-rate becomes the
+        # new anchor; we carry that delta forward unchanged.
+        qual_delta = review.confidence - old_pass
+        new_confidence = max(0.0, min(1.0, new_pass + qual_delta))
+
+        # Rescue-share cap: if rescues are doing >50% of the support work,
+        # the report is structurally less robust than one whose support
+        # comes from the original ledger. Cap at 0.85 so it can't read as
+        # "customer-ready" purely on rescue-derived evidence.
+        passed_count = sum(1 for c in new_claims if c.passed)
+        rescue_share = rescued / max(1, passed_count)
+        capped_by_share = False
+        if rescue_share > 0.50:
+            capped_at = 0.85
+            if new_confidence > capped_at:
+                new_confidence = capped_at
+                capped_by_share = True
+
+        review = review.model_copy(update={"confidence": new_confidence})
         logger.info(
             "web_verify: rescued %d/%d claims (verified=%d, corroborated=%d); "
-            "fact-check pass-rate %.2f → %.2f; confidence bumped to %.2f",
+            "pass-rate %.2f → %.2f; qual_delta=%+.2f; rescue_share=%.0f%%%s; "
+            "confidence → %.2f",
             rescued, len(capped), verified_n, corroborated_n,
-            old_pass, new_pass, review.confidence,
+            old_pass, new_pass, qual_delta, rescue_share * 100,
+            " (capped at 0.85)" if capped_by_share else "",
+            review.confidence,
         )
     else:
         logger.info("web_verify: no claims rescued (attempted %d)", len(capped))
