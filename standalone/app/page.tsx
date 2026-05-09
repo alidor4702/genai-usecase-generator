@@ -494,6 +494,11 @@ function RunView({
 
       {reportData && (
         <section className="space-y-4">
+          {reportData.meta_review &&
+            (!reportData.meta_review.sales_engineer_ready ||
+              reportData.meta_review.confidence < 0.70) && (
+              <DraftBanner review={reportData.meta_review} />
+            )}
           <div className="flex items-baseline justify-between">
             <h2 className="text-sm uppercase tracking-[0.18em] text-ink-secondary font-bold">
               Generated use cases
@@ -557,6 +562,47 @@ function stripUseCaseSection(md: string): string {
 }
 
 /* ─────────────────────────  Report renderer  ───────────────────────── */
+
+function DraftBanner({
+  review,
+}: {
+  review: NonNullable<Report["meta_review"]>;
+}) {
+  const conf = review.confidence;
+  return (
+    <div className="relative glass rounded-xl border-l-4 border-amber-500 p-4 sm:p-5">
+      <div className="flex items-start gap-3">
+        <div className="shrink-0 w-9 h-9 rounded-md bg-amber-500/20 text-amber-300 flex items-center justify-center">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+            strokeWidth="1.5" strokeLinecap="square" shapeRendering="crispEdges" aria-hidden>
+            <polygon points="8,2 14,13 2,13" />
+            <line x1="8" y1="6" x2="8" y2="10" />
+            <line x1="8" y1="11.5" x2="8" y2="12" />
+          </svg>
+        </div>
+        <div className="flex-1">
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-[11px] uppercase tracking-[0.18em] text-amber-300 font-bold">
+              Draft · needs revision
+            </span>
+            <span className="text-xs text-ink-muted">
+              meta-eval confidence{" "}
+              <span className="text-amber-300 font-mono font-bold">{conf.toFixed(2)}</span>
+              {" "}· threshold ≥ 0.70
+            </span>
+          </div>
+          <p className="text-sm text-slate-200 mt-1.5 leading-relaxed">
+            The system produced this report but flagged it as not-ready for a
+            customer meeting. Every use case renders below for inspection. The
+            fact-check block at the bottom shows which claims passed, were
+            rescued via web search, were rejected by the source-judge, or were
+            rewritten qualitatively.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ReportRender({ markdown }: { markdown: string }) {
   return (

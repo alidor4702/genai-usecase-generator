@@ -271,7 +271,9 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
 
         self.current_step = "final_qualify"
         self.progress_percent = 94.0
-        enriched_uses = await final_qualitative_replacement_activity(enriched_uses, fact_claims)
+        enriched_uses, fact_claims = await final_qualitative_replacement_activity(
+            enriched_uses, fact_claims
+        )
 
         self.current_step = "quality_signals"
         self.progress_percent = 96.0

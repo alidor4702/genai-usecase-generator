@@ -176,16 +176,27 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
     )
     cost_summary = ", ".join(t.value for t in signals.cost_tier_spread)
     lines.append(f"- **Cost-tier spread**: {cost_summary}")
+    in_scope = [c for c in signals.fact_check if not c.qualified_out]
+    qualified_n = len(signals.fact_check) - len(in_scope)
+    qualified_note = (
+        f" · {qualified_n} rewritten qualitatively (excluded from rate)"
+        if qualified_n
+        else ""
+    )
     lines.append(
-        f"- **Fact-check pass rate**: `{signals.fact_check_pass_rate:.0%}` ({sum(1 for c in signals.fact_check if c.passed)}/{len(signals.fact_check)} claims supported by research)"
+        f"- **Fact-check pass rate**: `{signals.fact_check_pass_rate:.0%}` "
+        f"({sum(1 for c in in_scope if c.passed)}/{len(in_scope)} claims supported by research"
+        f"{qualified_note})"
     )
     # Per-claim transparency block — without this the aggregate pass rate is
     # opaque (no way to tell whether meta-eval is being legitimately strict
     # or being a verbatim-match brat). List each claim's verdict so the
     # reader can judge for themselves.
     if signals.fact_check:
-        passed = [c for c in signals.fact_check if c.passed]
-        failed = [c for c in signals.fact_check if not c.passed]
+        in_scope = [c for c in signals.fact_check if not c.qualified_out]
+        passed = [c for c in in_scope if c.passed]
+        failed = [c for c in in_scope if not c.passed]
+        rewritten = [c for c in signals.fact_check if c.qualified_out]
         lines.append("")
         lines.append("<details><summary>Fact-check detail (per claim)</summary>")
         lines.append("")
@@ -200,6 +211,15 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
                         rationale = f"{c.judge_reason} (was: {rationale[:120]})"
                 lines.append(
                     f"- [{c.use_case_id}] {c.claim}{judge_chip} — _{rationale[:240]}_"
+                )
+            lines.append("")
+        if rewritten:
+            lines.append(
+                f"**Rewritten qualitatively ({len(rewritten)}):** _the original draft asserted these but the verification chain couldn't anchor them, so the rendered prose was rewritten into qualitative phrasing. Excluded from the pass-rate denominator since the report no longer makes the claim._"
+            )
+            for c in rewritten:
+                lines.append(
+                    f"- [{c.use_case_id}] {c.claim} `[rewritten qualitatively]`"
                 )
             lines.append("")
         if passed:
@@ -242,6 +262,32 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
     return "\n".join(lines)
 
 
+def _draft_banner_md(report: Report) -> str:
+    """Top-of-report banner shown when meta-eval flagged the run as
+    needing revision. Quotes the cross-cutting concern + confidence so
+    the reviewer can audit immediately. NOT a suppression — every use
+    case still renders below; this just surfaces the verdict honestly.
+    """
+    if report.meta_review is None:
+        return ""
+    conf = report.meta_review.confidence
+    weakness = report.meta_review.weakness_reason or ""
+    cross = report.meta_review.cross_cutting_concern or ""
+    lines = [
+        "> **Draft — needs revision before customer use.** "
+        f"Meta-eval confidence `{conf:.2f}` (sales-engineer-ready threshold ≥ 0.70). "
+        f"The report's three use cases render below for inspection, with each claim "
+        f"tagged supported / unsupported / rewritten qualitatively in the fact-check block."
+    ]
+    if cross:
+        lines.append(">")
+        lines.append(f"> **Cross-cutting concern:** {cross}")
+    if weakness:
+        lines.append(">")
+        lines.append(f"> **Weakest use case:** {weakness}")
+    return "\n".join(lines)
+
+
 def _intro_md(ctx: CompanyContext, uses: list[EnrichedUseCase]) -> str:
     return (
         f"## GenAI Use Cases for {ctx.identity.name}\n\n"
@@ -265,6 +311,16 @@ def _rejected_md(rejected: list[RejectedCandidate]) -> str:
 def render_report_to_markdown(report: Report) -> str:
     """Single-document Markdown rendering — for CLI / standalone web app."""
     parts: list[str] = []
+    # Draft banner — when meta-eval flagged the report not-ready or
+    # confidence is low, surface that AT THE TOP rather than burying it
+    # in the quality footer. Honest signal beats hidden caveats; the
+    # reviewer still sees every use case + the rejection chain below.
+    if report.meta_review is not None and (
+        not report.meta_review.sales_engineer_ready
+        or report.meta_review.confidence < 0.70
+    ):
+        parts.append(_draft_banner_md(report))
+        parts.append("")
     parts.append(_intro_md(report.company, report.top_use_cases))
     parts.append("")
     for i, uc in enumerate(report.top_use_cases):

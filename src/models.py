@@ -556,6 +556,13 @@ class FactCheckEntry(BaseModel):
     # transparency block.
     judge_rejected: bool = False
     judge_reason: str | None = None
+    # Set by Step 7e (final qualitative replacement) when the prose was
+    # rewritten so this specific claim is no longer asserted in the
+    # customer-facing text. These claims are excluded from the fact-check
+    # pass-rate denominator (the prose doesn't make the claim any more, so
+    # whether it's "supported" is moot) but stay visible in the transparency
+    # block tagged "[rewritten qualitatively]" so the audit trail is intact.
+    qualified_out: bool = False
 
 
 class QualitySignals(BaseModel):
@@ -570,9 +577,15 @@ class QualitySignals(BaseModel):
 
     @property
     def fact_check_pass_rate(self) -> float:
-        if not self.fact_check:
+        # Exclude `qualified_out` claims from the denominator: those are
+        # claims that the original draft made but Step 7e rewrote out of
+        # the prose qualitatively. Counting them as "unsupported" against
+        # a rate the report no longer asserts would under-report the
+        # actual reliability of the rendered text.
+        in_scope = [f for f in self.fact_check if not f.qualified_out]
+        if not in_scope:
             return 1.0
-        return sum(1 for f in self.fact_check if f.passed) / len(self.fact_check)
+        return sum(1 for f in in_scope if f.passed) / len(in_scope)
 
 
 class MetaEvalReview(BaseModel):

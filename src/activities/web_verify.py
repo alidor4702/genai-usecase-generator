@@ -238,8 +238,14 @@ async def web_verify_unsupported_claims_activity(
 
     rescued = verified_n + corroborated_n
     if rescued > 0:
-        old_pass = sum(1 for c in claims if c.passed) / max(1, len(claims))
-        new_pass = sum(1 for c in new_claims if c.passed) / max(1, len(new_claims))
+        # Use in-scope (non-qualified-out) claims for the rate. Web-verify
+        # runs before final_qualify in the pipeline so qualified_out is
+        # always False here; the filter is defense-in-depth in case the
+        # call order changes.
+        all_active = [c for c in claims if not c.qualified_out]
+        all_active_new = [c for c in new_claims if not c.qualified_out]
+        old_pass = sum(1 for c in all_active if c.passed) / max(1, len(all_active))
+        new_pass = sum(1 for c in all_active_new if c.passed) / max(1, len(all_active_new))
 
         # Re-anchor confidence on the new pass-rate, preserve meta-eval's
         # qualitative delta. The META_EVALUATION_SYSTEM prompt anchors

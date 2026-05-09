@@ -265,9 +265,31 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
     # Step 7e — Final qualitative replacement. Numbers + named entities the
     # whole verify chain (pool → web-verify → judge) couldn't anchor get
     # rewritten qualitatively in the prose so the report doesn't read like
-    # it's asserting fabricated facts.
+    # it's asserting fabricated facts. Claims that get rewritten are flagged
+    # qualified_out=True and excluded from the pass-rate denominator below.
     log.info("=== Step 7e: Final qualitative replacement ===")
-    enriched_uses = await final_qualitative_replacement_activity(enriched_uses, fact_claims)
+    enriched_uses, fact_claims = await final_qualitative_replacement_activity(
+        enriched_uses, fact_claims
+    )
+
+    # After qualified_out flagging, re-anchor confidence on the in-scope
+    # claim ratio (pre-qualify supported / pre-qualify total → preserve the
+    # qualitative delta meta-eval applied; new ratio reflects what the
+    # rendered prose still asserts).
+    in_scope = [c for c in fact_claims if not c.qualified_out]
+    if in_scope:
+        new_pass = sum(1 for c in in_scope if c.passed) / len(in_scope)
+        # The previous review.confidence carries meta-eval's + web_verify's
+        # + judge's adjustments; keep their delta-from-pass-rate intact.
+        prev_pass = sum(1 for c in fact_claims if c.passed) / max(1, len(fact_claims))
+        qual_delta = review.confidence - prev_pass
+        review = review.model_copy(
+            update={"confidence": max(0.0, min(1.0, new_pass + qual_delta))}
+        )
+        log.info(
+            "post-qualify: pass-rate (in-scope) %.2f, confidence → %.2f",
+            new_pass, review.confidence,
+        )
 
     # Quality signals
     log.info("=== Quality signals ===")

@@ -108,12 +108,18 @@ def _claim_has_numeric_or_specific_anchor(claim: str) -> bool:
 async def _qualify_one_use_case(
     uc: EnrichedUseCase,
     unsupported_claims: list[FactCheckEntry],
-) -> EnrichedUseCase:
+) -> tuple[EnrichedUseCase, list[str]]:
+    """Rewrite the use case's prose to qualify the listed unsupported
+    claims. Returns (updated_use_case, list_of_qualified_claim_texts) so
+    the caller can mark each qualified claim with `qualified_out=True`.
+    The pass-rate metric excludes qualified_out claims from its denominator
+    because the prose no longer asserts them.
+    """
     if not unsupported_claims:
-        return uc
+        return uc, []
     relevant = [c for c in unsupported_claims if _claim_has_numeric_or_specific_anchor(c.claim)]
     if not relevant:
-        return uc
+        return uc, []
 
     client = mistral_client()
     user = (
@@ -151,7 +157,7 @@ async def _qualify_one_use_case(
             ev.outputs_summary = f"qualified {len(data)} fields"
     except Exception as e:
         logger.warning("final_qualify: failed for %s — %s; keeping original prose", uc.id, type(e).__name__)
-        return uc
+        return uc, []
 
     new_desc = str(data.get("description") or uc.description)
     new_why = str(data.get("why_this_company") or uc.why_this_company)
@@ -166,30 +172,88 @@ async def _qualify_one_use_case(
             "top_implementation_risk": new_risk.strip() or uc.top_implementation_risk,
         }
     )
-    logger.info("final_qualify: %s — rewrote %d fields based on %d unsupported claims",
-                uc.id, sum(1 for old, new in [(uc.description, new_desc), (uc.why_this_company, new_why),
-                                              (uc.time_to_value.estimate, new_ttv),
-                                              (uc.top_implementation_risk, new_risk)]
-                          if old != new), len(relevant))
-    return updated
+
+    # Decide which of the relevant claims actually got qualified. Heuristic:
+    # if the claim's specific number / capitalised entity used to appear in
+    # the original prose but no longer appears in the rewritten prose, the
+    # claim was successfully qualified. Otherwise leave it as a plain
+    # passed=False (the LLM might have decided it was already qualitative).
+    old_blob = " ".join([uc.description, uc.why_this_company, uc.time_to_value.estimate, uc.top_implementation_risk]).lower()
+    new_blob = " ".join([new_desc, new_why, new_ttv, new_risk]).lower()
+    qualified_texts: list[str] = []
+    for c in relevant:
+        # Pull the most distinctive token from the claim — a number or a
+        # ≥4-char capitalised word. If old prose contained it and new
+        # prose doesn't, count the claim as qualified.
+        tokens: list[str] = []
+        import re as _re
+        tokens.extend(t.lower() for t in _re.findall(r"\d+(?:[.,]\d+)?", c.claim))
+        tokens.extend(t.lower() for t in _re.findall(r"\b[A-Z][a-zA-Z0-9]{3,}\b", c.claim))
+        # Skip ultra-generic capitalised words.
+        skipwords = {"this", "that", "company", "corporate", "the", "they", "their"}
+        tokens = [t for t in tokens if t not in skipwords]
+        if not tokens:
+            continue
+        if any(t in old_blob and t not in new_blob for t in tokens):
+            qualified_texts.append(c.claim)
+
+    rewritten_n = sum(
+        1 for old, new in [
+            (uc.description, new_desc),
+            (uc.why_this_company, new_why),
+            (uc.time_to_value.estimate, new_ttv),
+            (uc.top_implementation_risk, new_risk),
+        ] if old != new
+    )
+    logger.info(
+        "final_qualify: %s — rewrote %d fields, qualified_out=%d/%d unsupported claims",
+        uc.id, rewritten_n, len(qualified_texts), len(relevant),
+    )
+    return updated, qualified_texts
 
 
 @workflows.activity(start_to_close_timeout=timedelta(seconds=180))
 async def final_qualitative_replacement_activity(
     enriched_uses: list[EnrichedUseCase],
     fact_claims: list[FactCheckEntry],
-) -> list[EnrichedUseCase]:
+) -> tuple[list[EnrichedUseCase], list[FactCheckEntry]]:
     """Per use case, rewrite still-unsupported numeric/named claims into
-    qualitative phrasing. No-op if there are no unsupported claims.
+    qualitative phrasing. Returns (updated_use_cases, updated_fact_claims)
+    — claims that the rewrite actually qualified out are flagged
+    `qualified_out=True` so they're excluded from the pass-rate
+    denominator (the prose no longer asserts them) but still rendered in
+    the transparency block under "[rewritten qualitatively]".
     """
     if not enriched_uses or not fact_claims:
-        return enriched_uses
+        return enriched_uses, fact_claims
     by_uc: dict[str, list[FactCheckEntry]] = {}
     for c in fact_claims:
         if not c.passed:
             by_uc.setdefault(c.use_case_id, []).append(c)
     if not by_uc:
-        return enriched_uses
+        return enriched_uses, fact_claims
 
     coros = [_qualify_one_use_case(uc, by_uc.get(uc.id, [])) for uc in enriched_uses]
-    return list(await asyncio.gather(*coros))
+    results = await asyncio.gather(*coros)
+
+    new_uses: list[EnrichedUseCase] = []
+    qualified_index: set[tuple[str, str]] = set()  # (use_case_id, claim_text)
+    for (updated_uc, qualified_texts) in results:
+        new_uses.append(updated_uc)
+        for ct in qualified_texts:
+            qualified_index.add((updated_uc.id, ct))
+
+    if not qualified_index:
+        return new_uses, fact_claims
+
+    new_claims: list[FactCheckEntry] = []
+    for c in fact_claims:
+        if (c.use_case_id, c.claim) in qualified_index:
+            new_claims.append(c.model_copy(update={"qualified_out": True}))
+        else:
+            new_claims.append(c)
+    logger.info(
+        "final_qualify: marked %d claims qualified_out across %d use cases",
+        len(qualified_index), len(new_uses),
+    )
+    return new_uses, new_claims

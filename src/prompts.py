@@ -559,6 +559,21 @@ NOT SUBSTANTIVE (skip from claims list):
   are framing, not facts.
 - Hedged speculation about future state — "this could enable", "this
   would unlock". They're proposals, not assertions about the company.
+- CAPABILITY DESCRIPTIONS OF THE PROPOSED SYSTEM. The fact-check is
+  about the COMPANY-AS-DESCRIBED, not about whether the proposed
+  solution's capabilities are real (they're hypothetical by definition
+  — the system hasn't been built yet). Skip claims phrased as:
+    - "the system can do X" / "the platform flags Y" /
+      "the agent reduces manual review by Z"
+    - "the system uses on-prem deployment" / "deployed on EU-hosted
+      infrastructure" / "leverages multilingual extraction"
+    - Any forward-looking architectural / design choice attributed to
+      the proposed solution rather than to a deployment that already
+      exists.
+  The TEST: would a sales engineer feel comfortable saying this in a
+  customer meeting as a fact about the customer? If yes, extract it.
+  If no — if it's a description of what the proposed system would do
+  once built — skip it.
 
 ILLUSTRATIVE CONTENT IS EXCLUDED FROM FACT-CHECKING:
 - Each use case is presented with a clearly-marked

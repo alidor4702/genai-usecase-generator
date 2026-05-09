@@ -55,42 +55,64 @@ logger = logging.getLogger(__name__)
 
 
 _JUDGE_SYSTEM = """\
-You are a strict source-claim coherence judge. Given:
+You are a source-claim coherence judge. Given:
 - A factual CLAIM about a target company
 - A SOURCE EXCERPT (a URL's title + body content)
 
-Decide whether the source ACTUALLY supports the claim, or just contains
-related entities / numbers / keywords in unrelated context.
+YOUR CENTRAL QUESTION: would a reasonable reader, on their own,
+conclude the claim is true given this snippet?
 
-Strict rule: a source supports the claim only if a reader of the source
-would, on their own, be able to conclude the claim from what's written
-there. Mere mention of the company name or a similar number elsewhere on
-the page does NOT count.
+The snippet does NOT need to literally restate the claim. The way real
+journalism fact-checking works: a number that satisfies a stated
+relationship counts; rephrased equivalents count; specific instances
+that imply a more general claim count. What does NOT count is mere
+adjacency — entities or topics being mentioned without the assertion
+itself being supportable from the text.
 
-Examples of NOT supporting:
-- Claim: "BNP partnered with Mistral on LLMs" / Source: a PDF about
-  Mistral Large 3 architecture that doesn't mention BNP. → not supported.
-- Claim: "L'Oréal achieved GDPR alignment via Mistral" / Source: a
-  generic "AI automation for retail" blog with no L'Oréal mention.
+WHAT SUPPORTS THE CLAIM:
+- Numerical sufficiency. Source contains a number that satisfies a
+  relationship in the claim. "operates in 56 countries" supports
+  "operates in 45+ countries". "215,000 employees" supports
+  "approximately 200,000 employees". "10-petabyte platform" supports
+  "multi-petabyte data platform".
+- Synonyms / rephrasing. Source states the same fact in different
+  words. "acquired ModiFace in 2018" supports "owns ModiFace".
+  "EU-headquartered with sovereign deployment" supports "operates
+  on EU-hosted infrastructure".
+- Inference from instances. Source contains specific instances that
+  imply a more general claim. "stores in France, Spain, Italy,
+  Belgium" supports "operates across multiple EU markets".
+- Direct match. Source literally restates the claim.
+
+WHAT DOES NOT SUPPORT:
+- Mere entity adjacency. Source mentions related entities but doesn't
+  address the assertion. (A Mistral data-center article doesn't
+  support a claim about L'Oréal–Mistral fit unless L'Oréal is named in
+  context.)
+- Topical adjacency. Source is in the same topic but not the same
+  fact. (A job description mentioning AMI does not support a claim
+  about Veolia's actual AMI read-success-rate data.)
+- Token co-occurrence in unrelated context. (The company name and a
+  number both appear, but in different paragraphs about different
+  things.)
+
+CONTRADICTION GUARD — these stay rejected even if they look close:
+- The snippet asserts a different VALUE for the same fact. Claim
+  "€3.279 trillion AUM" contradicted by snippet "€2.79 trillion AUM"
+  → not supported (factual conflict, not approximation).
+- The snippet asserts a different RANK or SUPERLATIVE. Claim "largest
+  in Europe" contradicted by snippet "second largest in Europe"
   → not supported.
-- Claim: "Carrefour reduced waste by 22%" / Source: a Carrefour press
-  release saying they have a sustainability program but no 22% figure.
-  → not supported.
+- The snippet asserts a different COUNT for an enumerated set. Claim
+  "supports 12 European languages" contradicted by snippet "supports
+  9 languages" → not supported (catches stale-training-data
+  fabrications about specific feature counts).
 
-Examples of supporting:
-- Claim: "Carrefour partnered with Centric Software" / Source: Centric
-  Software press release announcing the Carrefour PLM deal. → supported.
-- Claim: "L'Oréal operates a 10 PB data platform" / Source: L'Oréal
-  annual report literally containing "our 10-petabyte data platform".
-  → supported.
-- Claim: "Veolia operates the GreenUp program" / Source: Veolia 2024
-  strategic plan announcing GreenUp. → supported.
-
-Be strict. The default for inconclusive evidence is NOT SUPPORTED.
+Default for inconclusive evidence: NOT SUPPORTED.
 
 Output STRICT JSON: {"supports": true|false, "reason": str}
-The reason should be one short sentence pointing at what's in (or
-missing from) the source.
+The reason is one short sentence that points at what in the source
+satisfied (or failed to satisfy) the central question.
 """
 
 
@@ -237,10 +259,14 @@ async def judge_claim_sources_activity(
 
     if rejected > 0:
         # Re-run the same confidence math as web_verify so the headline
-        # reflects the post-judge state. Use the pre-judge claim ratio as
-        # the "old" anchor.
-        old_pass = sum(1 for c in claims if c.passed) / max(1, len(claims))
-        new_pass = sum(1 for c in new_claims if c.passed) / max(1, len(new_claims))
+        # reflects the post-judge state. Use in-scope claim ratios
+        # (qualified_out claims excluded — defense-in-depth, since the
+        # judge currently runs before final_qualify and qualified_out
+        # would always be False here).
+        all_active = [c for c in claims if not c.qualified_out]
+        all_active_new = [c for c in new_claims if not c.qualified_out]
+        old_pass = sum(1 for c in all_active if c.passed) / max(1, len(all_active))
+        new_pass = sum(1 for c in all_active_new if c.passed) / max(1, len(all_active_new))
         qual_delta = review.confidence - old_pass
         new_confidence = max(0.0, min(1.0, new_pass + qual_delta))
         review = review.model_copy(update={"confidence": new_confidence})
