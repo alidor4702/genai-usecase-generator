@@ -2,23 +2,145 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
+:root {
+  color-scheme: dark;
+  --grad-orange: #FA552E;
+  --grad-deep: #1B1F2A;
+}
 
-html, body { background: #0E1116; color: #E6EDF3; }
+html, body {
+  background: #0A0E14;
+  color: #E6EDF3;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
 
 a { color: #FA552E; }
 a:hover { text-decoration: underline; }
 
-.prose-mistral {
-  @apply text-slate-200;
+/* Subtle moving orb backdrop — three soft radial gradients drifting slowly */
+.bg-mesh {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
 }
-.prose-mistral h2 { @apply text-2xl font-semibold mt-6 mb-3 text-white; }
-.prose-mistral h3 { @apply text-xl font-semibold mt-5 mb-2 text-white; }
+.bg-mesh::before,
+.bg-mesh::after,
+.bg-mesh > .third-orb {
+  content: "";
+  position: absolute;
+  width: 60vw;
+  height: 60vw;
+  border-radius: 50%;
+  filter: blur(110px);
+  opacity: 0.45;
+}
+.bg-mesh::before {
+  top: -10vh;
+  left: -10vw;
+  background: radial-gradient(circle, rgba(250,85,46,0.55) 0%, rgba(250,85,46,0) 70%);
+  animation: drift1 28s ease-in-out infinite;
+}
+.bg-mesh::after {
+  bottom: -20vh;
+  right: -15vw;
+  background: radial-gradient(circle, rgba(80,90,130,0.45) 0%, rgba(80,90,130,0) 70%);
+  animation: drift2 36s ease-in-out infinite;
+}
+.bg-mesh .third-orb {
+  top: 30vh;
+  left: 50vw;
+  width: 40vw;
+  height: 40vw;
+  background: radial-gradient(circle, rgba(255,180,140,0.20) 0%, rgba(255,180,140,0) 70%);
+  animation: drift3 22s ease-in-out infinite;
+}
+
+@keyframes drift1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(20vw, 12vh) scale(1.15); }
+}
+@keyframes drift2 {
+  0%, 100% { transform: translate(0, 0) scale(1.1); }
+  50% { transform: translate(-15vw, 18vh) scale(1); }
+}
+@keyframes drift3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(8vw, -10vh) scale(0.9); }
+}
+
+/* Pulse dot */
+.pulse-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #FA552E;
+  box-shadow: 0 0 0 0 rgba(250, 85, 46, 0.7);
+  animation: pulseRing 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes pulseRing {
+  0%   { box-shadow: 0 0 0 0 rgba(250, 85, 46, 0.6); }
+  70%  { box-shadow: 0 0 0 12px rgba(250, 85, 46, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(250, 85, 46, 0); }
+}
+
+/* Shimmer for "in flight" rows */
+.shimmer {
+  background-image: linear-gradient(
+    90deg,
+    rgba(250, 85, 46, 0) 0%,
+    rgba(250, 85, 46, 0.18) 50%,
+    rgba(250, 85, 46, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmerMove 2s linear infinite;
+}
+@keyframes shimmerMove {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Card / container styles */
+.glass {
+  background: rgba(22, 27, 34, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(48, 54, 61, 0.6);
+}
+
+/* Prose styling for the rendered Markdown report */
+.prose-mistral { @apply text-slate-200 leading-relaxed; }
+.prose-mistral h2 { @apply text-2xl font-semibold mt-7 mb-3 text-white; }
+.prose-mistral h3 { @apply text-xl font-semibold mt-6 mb-2 text-white; }
 .prose-mistral h4 { @apply text-lg font-semibold mt-4 mb-2 text-white; }
-.prose-mistral p  { @apply my-3 leading-relaxed; }
+.prose-mistral p  { @apply my-3; }
 .prose-mistral ul { @apply list-disc ml-6 my-2; }
+.prose-mistral ol { @apply list-decimal ml-6 my-2; }
+.prose-mistral li { @apply my-1; }
 .prose-mistral code { @apply bg-mistral-surface px-1.5 py-0.5 rounded text-mistral-orange text-sm; }
 .prose-mistral pre  { @apply bg-mistral-surface p-3 rounded my-3 text-xs overflow-x-auto; }
+.prose-mistral pre code { @apply bg-transparent text-slate-200 p-0; }
 .prose-mistral table { @apply my-4 border-collapse w-full; }
 .prose-mistral th, .prose-mistral td { @apply border border-mistral-border px-3 py-2 text-left text-sm; }
-.prose-mistral blockquote { @apply border-l-4 border-mistral-border pl-4 italic text-slate-400 my-3; }
+.prose-mistral th { @apply bg-mistral-surfaceLight text-white; }
+.prose-mistral blockquote { @apply border-l-4 border-mistral-orange pl-4 italic text-slate-400 my-4; }
+.prose-mistral a { @apply text-mistral-orange underline-offset-2; }
+.prose-mistral details { @apply my-3 border border-mistral-border rounded p-3 bg-mistral-surface; }
+.prose-mistral details summary { @apply cursor-pointer text-mistral-orangeBright font-semibold; }
+
+/* Slide-in animation for activity cards */
+.slide-in { animation: slideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
+@keyframes slideIn {
+  0%   { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(250, 85, 46, 0.25); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(250, 85, 46, 0.5); }
