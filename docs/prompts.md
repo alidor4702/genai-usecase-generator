@@ -203,6 +203,17 @@ Hard rules:
 - `inspired_by` MUST be a subset of the retrieved precedent IDs listed in the
   user message. Do NOT invent IDs. Empty list is acceptable for novel directions.
   Any inspired_by ID not in the retrieved list will be dropped post-generation.
+- `near_dup_of`: for each candidate, if another candidate in this same batch
+  addresses substantially the same workflow, primary data asset, user
+  persona, or value chain stage, set `near_dup_of` to that candidate's id.
+  Otherwise leave null. This is YOUR judgment about which siblings overlap —
+  you wrote them, you know which are variants of the same idea. Examples
+  that ARE near-dups: "sustainability product scoring" + "sustainability
+  supplier audit" (both supply-chain ESG scoring); "store associate
+  assistant" + "headquarters analyst assistant" (both internal RAG
+  chatbots). Examples that are NOT near-dups: "RAG over compliance docs"
+  + "anomaly detection on payment streams" (different surfaces). Top-3
+  selection drops the lower-scored member of any near-dup pair.
 - `grounded_in`: aim for **at least 3 distinct company-context field paths
   per candidate**. Use `field.subfield[N]` for list items (always include the
   index) and `field.subfield` for scalar fields. Do NOT invent paths — paths
@@ -633,13 +644,22 @@ Transformations to apply, IN ORDER:
    ALSO add the ledger entry's `evidence_id` to the `cited_evidence_ids`
    field in your output (a flat list of ev-IDs you newly cited).
 
-   STEP 3 — IF NOT FOUND anywhere in the pool, replace the specific number
-   with qualitative language. Examples:
-     - "reduces audit time by [unanchored: 30%]" → "reduces audit time
-       materially"
-     - "$[unanchored: 4M] in fines" → "significant compliance fines"
-     - "1.5B+ active devices" (and pool has no support) → "a billion-scale
-       active device base"
+   STEP 3 — IF NOT FOUND in the pool, KEEP THE NUMBER AS-IS (drop the
+   `[unanchored:]` wrapper but DO NOT replace with qualitative language).
+   The number flows through to the downstream verification chain:
+   meta-eval extracts it as a substantive claim, web-verify runs a Tavily
+   search if the pool didn't anchor it, and a source-judge decides
+   whether any retrieved source actually supports it. ONLY if that whole
+   chain still finds no support will a separate final-render step rewrite
+   the prose qualitatively.
+     - "reduces audit time by [unanchored: 30%]" → "reduces audit time by
+       30%" (keep the number, drop the bracket — verification chain decides)
+     - "$[unanchored: 4M] in fines" → "$4M in fines"
+     - "1.5B+ active devices" (already plain, no bracket) → leave as-is
+   Polish's job is to render clean prose, NOT to pre-strip unverified
+   numbers. v6 over-stripped real numbers (e.g. Carrefour's 14k stores,
+   L'Oréal's 10 PB) because polish ran before the verification chain had
+   a chance. v7 lets every number reach the verifier first.
 
    When a specific number IS already anchored in-sentence (precedent
    reference, markdown link to a ledger URL), KEEP IT and don't touch it.
@@ -797,8 +817,32 @@ reviewer would read it.
 - Time-to-value claims tagged `ttv_basis: "ballpark_assumption"` are NOT
   substantive factual claims about the company — they are explicitly
   flagged as best-effort estimates. Skip them in the claims list.
-- Generic claims like "this company has lots of data" are NOT substantive
-  and don't need a fact-check entry — focus on specific factual claims.
+
+WHAT COUNTS AS SUBSTANTIVE (extract these — they MUST be in the claims
+list, supported or not):
+- Specific named entities — products, programs, partnerships, platforms.
+- Specific numbers — percentages, scale figures, dollar amounts, time
+  windows, counts of stores / customers / countries / employees.
+- Specific data-asset claims — "X has historical sales data", "X has
+  loyalty-program data spanning N years", "X has telemetry from M smart
+  meters", "X has production capacity / inventory data". These ARE
+  substantive even when phrased generically; the company either has that
+  data or it doesn't. Verify against the pool. Same chain: pool support →
+  marked supported; no pool support → marked unsupported (web-verify and
+  the source-judge will get a chance).
+- Qualitative peer-deployment claims — "peer deployments report material
+  reductions in stockouts", "comparable retailers have seen meaningful
+  uplift", "industry peers report cost savings". These ARE substantive
+  even without a number — the assertion that peers DID something is a
+  factual claim that may or may not be supported by precedents / Tavily.
+  Extract and verify.
+
+NOT SUBSTANTIVE (skip from claims list):
+- Truly generic platitudes — "this company has lots of data", "AI is
+  transformative for retail", "Mistral is competitive on cost". These
+  are framing, not facts.
+- Hedged speculation about future state — "this could enable", "this
+  would unlock". They're proposals, not assertions about the company.
 
 ILLUSTRATIVE CONTENT IS EXCLUDED FROM FACT-CHECKING:
 - Each use case is presented with a clearly-marked
