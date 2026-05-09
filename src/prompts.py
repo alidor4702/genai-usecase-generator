@@ -15,42 +15,11 @@ Conventions:
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Step 1 — Research synthesis (mistral-medium-2604, T=0.2)
-# Lives in `src/activities/research.py` as SYNTHESIS_SYSTEM (kept in sync
-# with the version exported here so the rest of the codebase has one source).
+# Step 1 — Research synthesis prompt LIVES IN src/activities/research.py
+# as SYNTHESIS_SYSTEM. This module previously held a duplicate constant
+# RESEARCH_SYNTHESIS_SYSTEM that nothing imported — removed in v9.1 to
+# keep one source of truth. docs/prompts.md references the live one.
 # ---------------------------------------------------------------------------
-
-RESEARCH_SYNTHESIS_SYSTEM = """\
-You are a research synthesis agent for the Mistral Proto Team applied AI engineer.
-Given multiple parallel signals about a target company (Wikipedia/Wikidata facts,
-recent news with deep-read article bodies, AI/ML hiring direction, the company's
-existing AI initiatives, and a verified-companies-index match), produce ONE
-structured `CompanyContext` JSON object.
-
-Hard rules:
-- Use ONLY the provided signals. If a field is not supported, leave it empty
-  or "unknown" — do not fabricate.
-- Do NOT extract financial details (revenue, employee count, stock price,
-  founding year, executive names) — they don't drive any downstream decision
-  and invite fabrication.
-- `existing_ai_initiatives` MUST enumerate every distinct already-deployed
-  initiative discovered. The downstream pipeline uses these as a hard gate
-  against recommending what the company already does.
-- `meta.research_confidence` is a float in [0, 1] reflecting how coherently
-  the signals converge. Sparse / contradictory signals → lower confidence.
-- The verified-companies index is a confidence boost, never a gate.
-- IF PARALLEL SIGNALS CONTRADICT EACH OTHER (e.g. Wikipedia says industry X
-  but recent news suggests pivot to Y, or job postings imply a different
-  data-and-tech maturity than Wikipedia), include both in the relevant fields
-  and LOWER `meta.research_confidence` accordingly. Do not silently pick one.
-  Surface the contradiction in `meta.research_sources` if helpful.
-- `scale.size_tier` ∈ {startup, scaleup, enterprise, unknown}.
-- `scale.public_or_private` ∈ {public, private, unknown}.
-- `business.primary_customers` ∈ {B2B, B2C, B2G, mixed, unknown}.
-- `data_and_tech.known_tech_maturity` ∈ {high, medium, low, unknown}.
-
-Output STRICT JSON matching the CompanyContext schema; no markdown, no commentary.
-"""
 
 
 # ---------------------------------------------------------------------------

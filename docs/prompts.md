@@ -587,9 +587,17 @@ Output STRICT JSON.
 
 ---
 
-## Step 6 (regen) — Single use-case re-enrichment
+## Step 6 (regen) — Single use-case re-enrichment · DEPRECATED in v9
 
 **Model:** `mistral-large-2512 @ T=0.4` · **Source:** `src/activities/select_enrich.py:_SINGLE_REENRICH_SYSTEM`
+
+> **DEPRECATED:** removed from the pipeline in v9. The constant still
+> exists in code for reference but is never called. The post-meta-eval
+> chain (web-verify rescue → source-judge → final-qualify) replaces
+> regen's quality-fix role with finer-grained corrections that don't
+> require rewriting an entire use case. Trace data showed the second
+> meta-eval pass after regen rarely beat the first by >0.05 (noise,
+> not signal); dropping it saves ~50s per run.
 
 Replaces the meta-eval-flagged weakest use case with the next-best near-miss.
 
@@ -958,12 +966,180 @@ This step rescues real-but-unsourced claims:
 3. Promote the claim → mark `passed=True`, set `rescue_tier`, `rescue_url`,
    and append the rescue source to the EvidenceLedger as
    `EvidenceKind.CLAIM_VERIFICATION`.
-4. Bump the meta-eval `confidence` by the recall improvement (capped at
-   `+0.10`) so the headline confidence number stays anchored to the
-   updated supported-fraction.
+4. Re-anchor the meta-eval `confidence` on the rescued pass-rate, with
+   the qualitative delta `clamp(old_conf − old_pass, −0.15, +0.10)` (v9)
+   so meta-eval's structural penalty has bounded influence on top of the
+   supported-fraction.
 
 The rendered report distinguishes both rescue tiers with a `[verified ↗]`
 or `[corroborated ↗]` chip in the Fact-check detail block.
+
+---
+
+## Step 7d — Source-judge (claim ↔ source coherence)
+
+**Model:** `mistral-small-2603 @ T=0.1` · **Source:** `src/activities/source_judge.py:_JUDGE_SYSTEM`
+
+For every claim still marked `passed=True` with a resolvable supporting
+URL (rescue layer or ledger-cited evidence), the judge reads the
+(claim, snippet) pair and decides whether the source actually supports
+the claim — vs. just mentioning related entities. Three verdicts:
+
+- **`supported`** → claim stays passed.
+- **`corrected` (v9)** → snippet contradicts the claim's specific value
+  but contains the correct same-fact replacement. Restricted to
+  numeric / rank / temporal facts (entity contradictions stay
+  `unsupported` since silent entity-substitution would break downstream
+  prose). Activity patches the prose inline using the corrected value
+  + a markdown source link, marks the claim `corrected=True`,
+  `original_value` and `corrected_value` set. Renders with
+  `[corrected ↗ → <value>]` chip.
+- **`unsupported`** → claim flips to `passed=False` with `judge_rejected`.
+
+```
+You are a source-claim coherence judge. Given:
+- A factual CLAIM about a target company
+- A SOURCE EXCERPT (a URL's title + body content)
+
+YOUR CENTRAL QUESTION: would a reasonable reader, on their own,
+conclude the claim is true given this snippet?
+
+The snippet does NOT need to literally restate the claim. The way real
+journalism fact-checking works: a number that satisfies a stated
+relationship counts; rephrased equivalents count; specific instances
+that imply a more general claim count. What does NOT count is mere
+adjacency — entities or topics being mentioned without the assertion
+itself being supportable from the text.
+
+OUTPUT ONE OF THREE VERDICTS:
+
+(1) `supported` — the snippet supports the claim:
+- Numerical sufficiency. "56 countries" supports "45+ countries".
+  "215,000 employees" supports "approximately 200,000 employees".
+- Synonyms / rephrasing. "acquired ModiFace in 2018" supports
+  "owns ModiFace".
+- Inference from instances. "stores in France, Spain, Italy" supports
+  "operates across multiple EU markets".
+- Direct match.
+
+(2) `corrected` — the snippet CONTRADICTS the claim's specific value
+but contains the correct value for the SAME fact. We use the source's
+value to fix the prose inline. STRICT scope: this verdict applies ONLY
+to numeric, rank/ordinal, and temporal facts. NEVER use it for entity
+contradictions (a different company / product / person / program
+name) — those stay `unsupported` because silent entity-substitution
+would break downstream prose semantics.
+
+  Examples that ARE corrections:
+  - claim "€3.279T AUM" / snippet "€2.79T AUM"
+    → corrected_value: "€2.79T AUM"
+  - claim "supports 12 European languages" / snippet "across nine
+    European languages"
+    → corrected_value: "9 European languages"
+  - claim "largest bank in Europe" / snippet "second largest bank in
+    Europe by total assets"
+    → corrected_value: "second largest bank in Europe"
+  - claim "founded in 1859" / snippet "founded in 1854"
+    → corrected_value: "founded in 1854"
+
+  Examples that are NOT corrections (return `unsupported` instead):
+  - claim "partnered with Sephora" / snippet "partnered with Estée
+    Lauder" — different ENTITY, not a same-fact value mismatch.
+  - claim "uses Mistral Forge" / snippet "uses Anthropic Claude" —
+    different product entity.
+  - claim "3,548 plants" / snippet "around 3,600 plants" — too vague
+    to use as a clean replacement (no specific value to substitute).
+
+  The `corrected_value` you output MUST be a complete drop-in PHRASE
+  that can replace the original phrase in prose without leaving a
+  grammar error. NOT just the bare number — include unit and noun.
+  ("9 European languages", not just "9".)
+
+(3) `unsupported` — the snippet does not support the claim and does
+not contain a clean same-fact correction:
+- Mere entity adjacency (mentions related entities, doesn't address
+  the assertion).
+- Topical adjacency (job description doesn't support claims about
+  real-time data systems).
+- Token co-occurrence in unrelated context.
+- Contradicts the claim but no clean correction exists ("around 3,600
+  plants" is too vague to correct "3,548 plants").
+- Different ENTITY (use unsupported, not corrected).
+
+Default for inconclusive evidence: `unsupported`.
+
+OUTPUT FORMAT — STRICT JSON:
+{
+  "verdict": "supported" | "corrected" | "unsupported",
+  "reason": "<one short sentence pointing at what's in (or missing
+             from) the source that drove the verdict>",
+  "corrected_value": "<full drop-in replacement phrase, ONLY if
+                      verdict='corrected'>",
+  "same_fact": true | false
+}
+`same_fact` MUST be present when verdict='corrected' and MUST be true.
+If you cannot confirm the corrected value addresses the SAME entity +
+metric as the claim, downgrade to `unsupported`.
+```
+
+---
+
+## Step 7e — Final qualitative replacement
+
+**Model:** `mistral-small-2603 @ T=0.1` · **Source:** `src/activities/final_qualify.py:_FINAL_QUALIFY_SYSTEM`
+
+Per use case, takes the still-unsupported numeric / named-entity claims
+(after web-verify and judge) and surgically rewrites the prose so those
+specific assertions become qualitative ("a meaningful reduction" /
+"a multi-petabyte data platform"), leaving everything else verbatim.
+Replaces v6's pre-strip-at-polish behaviour — numbers now flow through
+the verify chain first, qualitative replacement only fires when the
+chain confirms no support.
+
+The activity tracks which claims it actually rewrote out of the prose
+and flags them `qualified_out=True`. Those claims are excluded from the
+fact-check pass-rate denominator (the prose no longer asserts them) and
+render in the transparency block under "Rewritten qualitatively" with a
+`[rewritten qualitatively]` chip.
+
+```
+You rewrite specific factual claims into qualitative phrasing while leaving
+the rest of the prose untouched. Given:
+- A use case's customer-facing prose (description, why_this_company,
+  time_to_value, top_implementation_risk)
+- A list of specific claims that downstream verification could NOT support
+  from any source
+
+Rewrite the prose so those specific unsupported claims become qualitative.
+Keep every other sentence verbatim — same words, same flow.
+
+Replacement guide:
+- Specific number → qualitative magnitude
+    "reduces audit time by 30%" (unsupported) → "reduces audit time
+    materially"
+    "10 PB data platform" (unsupported) → "large-scale data platform"
+    "14,000 stores" (unsupported) → "a global store network"
+- Specific peer-deployment number → qualitative
+    "Sephora's deployment reduced cart abandonment by 22%" → "Sephora has
+    reported material engagement gains"
+- Specific data-asset assertion that didn't verify → qualitative
+    "L'Oréal has 110 years of historical sales data" (unsupported) →
+    "L'Oréal has long-running sales data"
+- Specific named-entity claim that didn't verify → drop or qualify
+    "powered by Mistral Forge platform" (unsupported) → "powered by a
+    Mistral platform"
+
+DO NOT rewrite anything not in the unsupported list. If a claim is in
+the unsupported list but already qualitative, leave it alone.
+
+Output STRICT JSON:
+{
+  "description": "...",
+  "why_this_company": "...",
+  "time_to_value": "...",
+  "top_implementation_risk": "..."
+}
+```
 
 ---
 
