@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import timedelta
 
 import mistralai.workflows as workflows
@@ -34,6 +35,57 @@ logger = logging.getLogger(__name__)
 
 
 from src._util import strip_fence as _strip_fence  # noqa: E402
+
+
+# Regex patterns for phantom claims — phrasings the meta-eval LLM
+# occasionally copies from the prompt's example text as if they were
+# real claims. These are extremely unlikely to appear verbatim in
+# legitimate generated prose.
+_PHANTOM_PATTERNS = [
+    re.compile(r"\bspanning\s+N\s+years?\b", re.IGNORECASE),
+    re.compile(r"\bfrom\s+M\s+(?:smart\s+meters?|sensors?|stores?|customers?)\b", re.IGNORECASE),
+    # Bare uppercase placeholder as a standalone token in template position.
+    re.compile(r"\bspanning\s+[A-Z]\s+years?\b"),
+    re.compile(r"\bfrom\s+[A-Z]\s+smart\s+meters?\b"),
+    # The prompt's full example phrasings — match once with normalised whitespace.
+    re.compile(r"^\s*(?:.*\bhas\s+)?production\s+capacity\s*/\s*inventory\s+data\b\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:.*\bhas\s+)?historical\s+sales\s+data\b\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:.*\bhas\s+)?loyalty[- ]program\s+data\b\.?\s*$", re.IGNORECASE),
+    # Subjects "X has", "X is" with X as a single capital letter.
+    re.compile(r"^\s*[A-Z]\s+(?:has|is|operates|deployed)\b"),
+]
+
+
+def _looks_like_phantom_claim(
+    claim_text: str, use_case_id: str, valid_uc_ids: set[str]
+) -> bool:
+    """Return True iff this claim should be dropped pre-judge as a
+    phantom (extracted from the meta-eval prompt's examples rather than
+    from any actual use case prose).
+
+    Two independent triggers (OR):
+      (a) Unattached: use_case_id is empty/null/"None" or doesn't match
+          any of the report's actual use case IDs. This catches the
+          cleanest phantoms (the LLM emits `use_case_id: null` when it
+          can't decide).
+      (b) Placeholder-shape content: the claim text contains literal
+          template fragments from the prompt examples ("N years",
+          "M smart meters", standalone "production capacity / inventory
+          data" with no specific value, etc.). Catches phantoms even
+          when the LLM attached them to a real use case id.
+    """
+    text = (claim_text or "").strip()
+    if not text:
+        return True
+    # (a) unattached
+    uc = (use_case_id or "").strip()
+    if not uc or uc.lower() == "none" or uc not in valid_uc_ids:
+        return True
+    # (b) placeholder shape
+    for pat in _PHANTOM_PATTERNS:
+        if pat.search(text):
+            return True
+    return False
 
 
 def _format_use_cases(uses: list[EnrichedUseCase]) -> str:
@@ -244,6 +296,8 @@ async def meta_evaluate_activity(
     )
     raw_claims = data.get("claims") or []
     claims: list[FactCheckEntry] = []
+    valid_use_case_ids = {uc.id for uc in uses}
+    phantoms_dropped = 0
     if isinstance(raw_claims, list):
         # Ledger lookup so we can resolve "evidence:<ev-id>" → real URL for
         # the downstream source-judge step.
@@ -255,6 +309,24 @@ async def meta_evaluate_activity(
         for c in raw_claims:
             if not isinstance(c, dict):
                 continue
+
+            # ── Phantom-claim filter (v9.1) ───────────────────────────
+            # Belt-and-suspenders alongside the prompt anonymisation —
+            # drop any claim that's either unattached (no valid
+            # use_case_id) OR matches a placeholder shape from the
+            # prompt examples. The meta-eval LLM occasionally copies
+            # template phrasings ("X has loyalty-program data spanning
+            # N years", "M smart meters") as if they were real claims;
+            # they show up with use_case_id=None or as literals with
+            # bare-letter placeholders.
+            raw_uc = c.get("use_case_id")
+            uc_id = str(raw_uc) if isinstance(raw_uc, str) else ""
+            claim_text = str(c.get("claim", ""))
+            if _looks_like_phantom_claim(claim_text, uc_id, valid_use_case_ids):
+                phantoms_dropped += 1
+                continue
+            # ──────────────────────────────────────────────────────────
+
             source_kind = c.get("source_kind")
             source_kind = str(source_kind) if isinstance(source_kind, str) else None
             source_url: str | None = None
@@ -263,8 +335,8 @@ async def meta_evaluate_activity(
                 source_url = ledger_url_by_id.get(ev_id)
             claims.append(
                 FactCheckEntry(
-                    claim=str(c.get("claim", "")),
-                    use_case_id=str(c.get("use_case_id", "")),
+                    claim=claim_text,
+                    use_case_id=uc_id,
                     passed=bool(c.get("supported", c.get("passed", False))),
                     rationale=c.get("supporting_signal") or c.get("rationale"),
                     source_kind=source_kind,
@@ -272,11 +344,12 @@ async def meta_evaluate_activity(
                 )
             )
     logger.info(
-        "meta_eval: ready=%s confidence=%.2f weakest=%s claims_total=%d (passed=%d)",
+        "meta_eval: ready=%s confidence=%.2f weakest=%s claims_total=%d (passed=%d, phantoms_dropped=%d)",
         review.sales_engineer_ready,
         review.confidence,
         review.weakest_use_case_id,
         len(claims),
         sum(1 for c in claims if c.passed),
+        phantoms_dropped,
     )
     return review, claims

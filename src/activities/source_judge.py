@@ -158,9 +158,13 @@ class JudgeOutcome:
 async def _judge_one(
     claim: FactCheckEntry,
     source_excerpt: str,
-    source_url: str,
+    source_url: str | None,
 ) -> JudgeOutcome:
     """Run one judge call for a single (claim, source) pair.
+
+    `source_url` may be None when the snippet came from meta-eval's
+    supporting_signal rather than a resolved ledger entry — in that
+    case the user message just labels the source generically.
 
     On any error, returns verdict=supported (fail-open) so a transient API
     blip doesn't drop a real claim. The judge is a quality gate, not a
@@ -169,9 +173,10 @@ async def _judge_one(
     if not claim.claim or not source_excerpt:
         return JudgeOutcome("supported", None, None, source_url)
     client = mistral_client()
+    url_label = source_url if source_url else "(meta-eval supporting_signal — no URL resolved)"
     user = (
         f"CLAIM: {claim.claim}\n\n"
-        f"SOURCE URL: {source_url}\n"
+        f"SOURCE: {url_label}\n"
         f"SOURCE EXCERPT (truncated to 1500 chars):\n"
         f"{source_excerpt[:1500]}\n\n"
         'Output STRICT JSON per the schema above.'
@@ -233,23 +238,32 @@ async def _judge_one(
 def _resolve_source_excerpt(
     claim: FactCheckEntry,
     ledger: EvidenceLedger,
-) -> tuple[str, str] | None:
-    """Pick the source excerpt + url for a claim.
+) -> tuple[str, str | None] | None:
+    """Pick the (source_excerpt, source_url_or_None) for a claim.
 
     Priority order:
-    1. rescue_url (web-verify rescue layer) — find the matching ledger
-       entry by URL match; use its content.
-    2. source_url (set by meta-eval from "evidence:<ev-id>" lookup) —
-       same path.
-    3. None — judge skipped, claim trusted as-is.
+    1. rescue_url (web-verify rescue layer) → ledger lookup, full body.
+    2. source_url (meta-eval from "evidence:<ev-id>") → ledger lookup.
+    3. **v9.1 fallback**: claim.rationale (the meta-eval supporting_signal
+       text) → judge against that text directly. URL is None. Used for
+       company_context.* and precedent:* source_kinds where there's no
+       resolvable URL but meta-eval cited a quote — catches the L'Oréal
+       Galderma slip-through where the supporting quote didn't actually
+       mention the entities in the claim.
+    4. None → judge skipped (no content of any kind to verify against).
     """
     url = claim.rescue_url or claim.source_url
-    if not url:
-        return None
-    # Find the ledger entry whose url matches.
-    for ent in ledger.entries:
-        if ent.url == url and ent.content:
-            return ent.content, url
+    if url:
+        for ent in ledger.entries:
+            if ent.url == url and ent.content:
+                return ent.content, url
+    # No URL or URL didn't resolve to a ledger entry — fall back to the
+    # supporting_signal text from meta-eval. The judge will be told the
+    # source URL is None so its reason references "the supplied snippet"
+    # without claiming a specific URL backed it.
+    rationale = (claim.rationale or "").strip()
+    if rationale:
+        return rationale, None
     return None
 
 
@@ -348,8 +362,11 @@ async def judge_claim_sources_activity(
     if ledger is None or not claims:
         return review, claims, enriched_uses
 
-    # Build the work list: only claims passed=True with a resolvable URL.
-    work: list[tuple[int, FactCheckEntry, str, str]] = []
+    # Build the work list: ALL claims passed=True that have any content
+    # to verify against (URL-resolved ledger entry, OR fallback to
+    # meta-eval's supporting_signal text). v9.1 extension — was URL-only
+    # before, missed the L'Oréal Galderma slip-through.
+    work: list[tuple[int, FactCheckEntry, str, str | None]] = []
     for idx, c in enumerate(claims):
         if not c.passed:
             continue

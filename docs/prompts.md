@@ -857,22 +857,36 @@ reviewer would read it.
 
 WHAT COUNTS AS SUBSTANTIVE (extract these — they MUST be in the claims
 list, supported or not):
+
+CRITICAL: extract claims by REWORDING what the actual prose says into
+its own short factual statement. NEVER copy any of the example
+phrasings below as if they were a claim — the words "X" / "N" / "M"
+are placeholders meaning "any specific value", not literal text to
+extract. If a claim in your output contains a literal capital-letter
+placeholder (a bare "N", "M", "X" standing in for a value), you have
+made an extraction error: re-read the prose and either find the
+specific value or skip the claim.
+
 - Specific named entities — products, programs, partnerships, platforms.
+  Examples in REAL prose look like "Veolia's GreenUp strategic plan"
+  or "L'Oréal's ModiFace acquisition" — concrete named things. Extract
+  the named-entity assertion from the prose verbatim.
 - Specific numbers — percentages, scale figures, dollar amounts, time
-  windows, counts of stores / customers / countries / employees.
-- Specific data-asset claims — "X has historical sales data", "X has
-  loyalty-program data spanning N years", "X has telemetry from M smart
-  meters", "X has production capacity / inventory data". These ARE
-  substantive even when phrased generically; the company either has that
-  data or it doesn't. Verify against the pool. Same chain: pool support →
-  marked supported; no pool support → marked unsupported (web-verify and
-  the source-judge will get a chance).
-- Qualitative peer-deployment claims — "peer deployments report material
-  reductions in stockouts", "comparable retailers have seen meaningful
-  uplift", "industry peers report cost savings". These ARE substantive
-  even without a number — the assertion that peers DID something is a
-  factual claim that may or may not be supported by precedents / Tavily.
-  Extract and verify.
+  windows, counts of stores / customers / countries / employees. Use
+  the actual figure the prose stated. If the prose stated no figure,
+  do not invent a placeholder.
+- Data-asset claims — assertions that the company has a particular
+  data asset (e.g. customer loyalty records, transaction logs,
+  supply-chain telemetry, clinical-study databases). Extract the
+  specific data asset the prose names; if the prose was generic ("the
+  company has lots of data"), it is NOT substantive and should be
+  skipped.
+- Qualitative peer-deployment claims — assertions that peers (named or
+  unnamed) have achieved a particular outcome ("comparable retailers
+  reported material engagement gains", "peer utilities saw meaningful
+  reductions"). Substantive if the assertion attributes a specific
+  outcome class to peers; skip if it's purely framing ("AI is
+  transformative for retail").
 
 NOT SUBSTANTIVE (skip from claims list):
 - Truly generic platitudes — "this company has lots of data", "AI is
@@ -880,21 +894,44 @@ NOT SUBSTANTIVE (skip from claims list):
   are framing, not facts.
 - Hedged speculation about future state — "this could enable", "this
   would unlock". They're proposals, not assertions about the company.
-- CAPABILITY DESCRIPTIONS OF THE PROPOSED SYSTEM. The fact-check is
-  about the COMPANY-AS-DESCRIBED, not about whether the proposed
-  solution's capabilities are real (they're hypothetical by definition
-  — the system hasn't been built yet). Skip claims phrased as:
-    - "the system can do X" / "the platform flags Y" /
-      "the agent reduces manual review by Z"
-    - "the system uses on-prem deployment" / "deployed on EU-hosted
-      infrastructure" / "leverages multilingual extraction"
-    - Any forward-looking architectural / design choice attributed to
-      the proposed solution rather than to a deployment that already
-      exists.
-  The TEST: would a sales engineer feel comfortable saying this in a
-  customer meeting as a fact about the customer? If yes, extract it.
-  If no — if it's a description of what the proposed system would do
-  once built — skip it.
+- CAPABILITY DESCRIPTIONS OF THE PROPOSED SYSTEM — ABSOLUTE EXCLUSION.
+  The fact-check is about the COMPANY-AS-DESCRIBED, NOT about whether
+  the proposed solution's capabilities are real (they're hypothetical
+  by definition — the system hasn't been built yet). Skip immediately,
+  no exceptions:
+    - Subjects "the system" / "the agent" / "the platform" / "the
+      toolkit" / "the model" / "the pipeline" — ALWAYS skip. Whatever
+      verb follows describes a hypothetical capability, not a company
+      fact.
+        Skip: "The system processes transaction data, news feeds, and
+              regulatory filings to generate insights"
+        Skip: "The agent reduces false positives by 20-30%"
+        Skip: "The platform integrates with iManage and NetDocuments
+              via API"
+        Skip: "The toolkit uses on-prem deployment for sovereignty"
+    - Forward-looking design choices. "Integrates with X" /
+      "deployed on Y infrastructure" / "uses Z fine-tuning" — design
+      decisions about the proposed build, not facts about the company.
+    - "Fine-tuning on industry regulations improves accuracy" —
+      capability-of-the-build claim, not fact-about-the-company.
+
+  THE TEST — apply silently before extracting any claim:
+  Replace the company name in the claim with a different company
+  ("Acme Corp"). Does the claim still read true? If yes, the claim is
+  about the proposed system, not the company → SKIP. If the claim
+  becomes false (because it asserts something specific about the
+  company's actual current state, products, partnerships, scale,
+  strategy, or regulatory environment) → extract.
+
+    Example A: "L'Oréal owns ModiFace" → swap → "Acme Corp owns
+    ModiFace" reads false. EXTRACT.
+    Example B: "The system integrates with SAP" → swap doesn't even
+    apply since claim subject is the system, not the company. SKIP.
+    Example C: "L'Oréal has 36 brands" → swap → "Acme Corp has 36
+    brands" reads false. EXTRACT.
+
+  This test catches feature-description claims that pretend to be
+  company facts by reusing the company name.
 
 ILLUSTRATIVE CONTENT IS EXCLUDED FROM FACT-CHECKING:
 - Each use case is presented with a clearly-marked
