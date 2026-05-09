@@ -22,6 +22,7 @@ import contextvars
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 class TraceEvent(BaseModel):
     """One recorded action in the pipeline."""
 
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     step: str  # high-level pipeline step: "research", "retrieve", "generate", ...
     actor: str  # what executed it: "mistral-medium-2604", "tavily", "wikipedia", ...
     action: str  # what was done: "chat.complete", "search", "fetch_html", ...
@@ -259,6 +261,11 @@ async def trace_step(
         metadata=metadata or {},
         inputs_summary=inputs_summary,
     )
+    # Append at START so SSE can show the event live ("running") instead of
+    # only emitting it after the activity completes. The same event object is
+    # mutated in place at finish; the SSE handler re-emits when completed_at
+    # transitions from None → a timestamp.
+    trace.add(event)
     try:
         yield event
     except Exception as exc:  # noqa: BLE001 — record & re-raise
@@ -268,4 +275,3 @@ async def trace_step(
         completed = datetime.now(timezone.utc)
         event.completed_at = completed
         event.duration_ms = (completed - started).total_seconds() * 1000.0
-        trace.add(event)

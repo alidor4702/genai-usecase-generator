@@ -67,13 +67,26 @@ export default function Page() {
       cleanupRef.current = subscribeToEvents(
         run_id,
         (ev) => {
-          setEvents((prev) => [...prev, ev]);
+          // Merge by id: step_start appends a "running" card; step_complete
+          // patches the same card with completed_at + outputs_summary +
+          // duration_ms. Without an id (legacy) we just append.
+          setEvents((prev) => {
+            if (!ev.id) return [...prev, ev];
+            const idx = prev.findIndex((e) => e.id === ev.id);
+            if (idx === -1) return [...prev, ev];
+            const next = prev.slice();
+            next[idx] = { ...next[idx], ...ev };
+            return next;
+          });
           setCurrentStep(ev.step);
-          setProgress(progressForStep(ev.step));
+          // Functional updater so progress is monotonic across out-of-order
+          // events (step_start for an earlier phase shouldn't snap the bar
+          // backwards if a later phase has already started).
+          setProgress((cur) => Math.max(cur, progressForStep(ev.step)));
         },
         (p) => {
           setCurrentStep(p.step);
-          setProgress(Math.max(progress, p.progress));
+          setProgress((cur) => Math.max(cur, p.progress));
         },
         async (finalStatus) => {
           try {
@@ -230,53 +243,116 @@ function FormView({
   showAdvanced: boolean; setShowAdvanced: (b: boolean) => void;
   onSubmit: () => void;
 }) {
+  const SUGGESTIONS = ["Carrefour", "BNP Paribas", "L'Oréal", "Veolia", "Mistral AI"] as const;
+  const FOCUS_OPTIONS: { value: FocusArea; label: string; desc: string; emoji: string }[] = [
+    { value: "general", label: "General", desc: "Balanced across surfaces", emoji: "🎯" },
+    { value: "operations", label: "Operations", desc: "Supply chain · ops · cost", emoji: "⚙️" },
+    { value: "customer", label: "Customer", desc: "Personalisation · CX", emoji: "💬" },
+    { value: "sustainability", label: "Sustainability", desc: "ESG · compliance · CSR", emoji: "🌱" },
+  ];
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey && companyName.trim()) {
+      e.preventDefault();
+      onSubmit();
+    }
+  };
   return (
-    <section className="glass rounded-2xl p-6 sm:p-8 space-y-5 slide-in">
-      <label className="block">
-        <span className="text-xs uppercase tracking-wider text-ink-secondary font-semibold">Company name</span>
-        <input
-          value={companyName}
-          onChange={(e) => setCompanyName(e.target.value)}
-          placeholder="e.g. Carrefour, BNP Paribas, L'Oréal, Mistral AI"
-          className="mt-2 w-full px-4 py-3 bg-mistral-dark/60 border border-mistral-border rounded-lg text-white text-lg focus:border-mistral-orange focus:outline-none focus:ring-2 focus:ring-mistral-orange/30 transition-all"
-          autoFocus
-        />
-      </label>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <section className="relative glass rounded-3xl p-6 sm:p-10 space-y-7 slide-in overflow-hidden">
+      <div
+        className="pointer-events-none absolute inset-0 opacity-40"
+        style={{
+          background:
+            "radial-gradient(circle at 0% 0%, rgba(250,85,46,0.18), transparent 40%), radial-gradient(circle at 100% 100%, rgba(245,158,11,0.10), transparent 40%)",
+        }}
+        aria-hidden
+      />
+      <div className="relative">
         <label className="block">
-          <span className="text-xs uppercase tracking-wider text-ink-secondary font-semibold">Focus area</span>
-          <select
-            value={focusArea}
-            onChange={(e) => setFocusArea(e.target.value as FocusArea)}
-            className="mt-2 w-full px-3 py-2.5 bg-mistral-dark/60 border border-mistral-border rounded-lg text-white focus:border-mistral-orange focus:outline-none"
-          >
-            <option value="general">General</option>
-            <option value="operations">Operations</option>
-            <option value="customer">Customer</option>
-            <option value="sustainability">Sustainability</option>
-          </select>
+          <span className="text-[11px] uppercase tracking-[0.18em] text-mistral-orangeBright font-bold">
+            Step 1 · Pick a company
+          </span>
+          <div className="mt-3 relative">
+            <input
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              onKeyDown={onKey}
+              placeholder="Type any public company — e.g. Carrefour"
+              className="w-full pl-5 pr-12 py-4 bg-mistral-dark/70 border-2 border-mistral-border rounded-xl text-white text-xl placeholder:text-ink-muted focus:border-mistral-orange focus:outline-none focus:ring-4 focus:ring-mistral-orange/20 transition-all font-medium"
+              autoFocus
+            />
+            <kbd className="absolute right-4 top-1/2 -translate-y-1/2 text-[11px] text-ink-muted font-mono px-2 py-0.5 bg-mistral-surface rounded border border-mistral-border">
+              ↵
+            </kbd>
+          </div>
         </label>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <span className="text-[11px] text-ink-muted self-center mr-1">Try:</span>
+          {SUGGESTIONS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setCompanyName(s)}
+              className="px-3 py-1 text-xs rounded-full border border-mistral-border text-ink-secondary hover:text-white hover:border-mistral-orange hover:bg-mistral-orange/10 transition-all"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="relative">
+        <span className="text-[11px] uppercase tracking-[0.18em] text-mistral-orangeBright font-bold">
+          Step 2 · Focus area
+        </span>
+        <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {FOCUS_OPTIONS.map((o) => {
+            const active = focusArea === o.value;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setFocusArea(o.value)}
+                className={`text-left p-3 rounded-xl border-2 transition-all ${
+                  active
+                    ? "border-mistral-orange bg-mistral-orange/10 shadow-lg shadow-mistral-orange/10"
+                    : "border-mistral-border hover:border-mistral-orange/40 bg-mistral-dark/40"
+                }`}
+              >
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-white">
+                  <span>{o.emoji}</span>
+                  <span>{o.label}</span>
+                </div>
+                <div className="text-[11px] text-ink-secondary mt-0.5">{o.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="relative">
         <label className="block">
-          <span className="text-xs uppercase tracking-wider text-ink-secondary font-semibold">Research depth</span>
+          <span className="text-[11px] uppercase tracking-[0.18em] text-mistral-orangeBright font-bold">
+            Step 3 · Research depth
+          </span>
           <select
             value={depth}
             onChange={(e) => setDepth(e.target.value as ResearchDepth)}
-            className="mt-2 w-full px-3 py-2.5 bg-mistral-dark/60 border border-mistral-border rounded-lg text-white focus:border-mistral-orange focus:outline-none"
+            className="mt-3 w-full px-4 py-3 bg-mistral-dark/70 border-2 border-mistral-border rounded-xl text-white focus:border-mistral-orange focus:outline-none transition-all"
           >
-            <option value="low">Low — Wikipedia + verified-index + initiatives</option>
-            <option value="medium">Medium — adds news (default)</option>
-            <option value="high">High — adds jobs signal</option>
+            <option value="low">Low — Wikipedia + verified-index + initiatives (~30s)</option>
+            <option value="medium">Medium — adds news deep-read (default, ~90s)</option>
+            <option value="high">High — adds jobs signal (~2 min)</option>
           </select>
         </label>
       </div>
 
-      <div>
+      <div className="relative">
         <button
+          type="button"
           onClick={() => setShowAdvanced(!showAdvanced)}
-          className="text-xs uppercase tracking-wider text-mistral-orangeBright hover:text-mistral-orange font-semibold"
+          className="text-[11px] uppercase tracking-[0.18em] text-mistral-orangeBright hover:text-mistral-orange font-bold"
         >
-          {showAdvanced ? "▾" : "▸"} Advanced — criteria weights
+          {showAdvanced ? "▾" : "▸"} Advanced · criteria weights
         </button>
         {showAdvanced && (
           <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 mt-4 slide-in">
@@ -289,19 +365,16 @@ function FormView({
                 ["mistral_suitability", "Mistral fit"],
               ] as const
             ).map(([k, label]) => (
-              <label key={k} className="block">
+              <label key={k} className="block bg-mistral-dark/40 rounded-lg p-3 border border-mistral-border">
                 <div className="flex items-baseline justify-between text-[11px]">
                   <span className="text-ink-secondary uppercase tracking-wider">{label}</span>
-                  <span className="text-mistral-orange font-mono">{weights[k].toFixed(2)}</span>
+                  <span className="text-mistral-orange font-mono font-bold">{weights[k].toFixed(2)}</span>
                 </div>
                 <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
+                  type="range" min="0" max="1" step="0.05"
                   value={weights[k]}
                   onChange={(e) => setWeights({ ...weights, [k]: Number(e.target.value) })}
-                  className="w-full accent-mistral-orange"
+                  className="w-full mt-2 accent-mistral-orange"
                 />
               </label>
             ))}
@@ -309,13 +382,17 @@ function FormView({
         )}
       </div>
 
-      <div className="flex justify-end pt-2">
+      <div className="relative flex items-center justify-between pt-2">
+        <p className="text-[11px] text-ink-muted">
+          ~3 min · 14 LLM calls · live agent activity feed
+        </p>
         <button
           onClick={onSubmit}
           disabled={!companyName.trim()}
-          className="px-7 py-3 bg-gradient-to-r from-mistral-orange to-mistral-orangeBright hover:from-mistral-orangeBright hover:to-mistral-orange disabled:from-slate-700 disabled:to-slate-700 disabled:cursor-not-allowed text-white rounded-lg font-semibold tracking-wide shadow-lg shadow-mistral-orange/20 transition-all"
+          className="group relative px-8 py-3.5 bg-gradient-to-r from-mistral-orange to-mistral-orangeBright hover:from-mistral-orangeBright hover:to-mistral-orange disabled:from-slate-700 disabled:to-slate-700 disabled:cursor-not-allowed text-white rounded-xl font-bold tracking-wide shadow-xl shadow-mistral-orange/30 hover:shadow-mistral-orange/50 transition-all"
         >
-          Generate report →
+          Generate report
+          <span className="ml-2 inline-block group-hover:translate-x-0.5 transition-transform">→</span>
         </button>
       </div>
     </section>

@@ -46,6 +46,49 @@ def _clean_mermaid(s: str) -> str:
     return s.strip()
 
 
+# Blueprint pattern → categorical color mapping for mermaid rendering.
+# Surface-area-driven so a sales engineer can see at a glance which blueprint
+# family each use case sits in. Hex values are accent colors; mermaid will use
+# them as `classDef` fills.
+_BLUEPRINT_COLORS: dict[str, dict[str, str]] = {
+    "rag":                   {"fill": "#1e3a8a", "stroke": "#3b82f6", "color": "#dbeafe"},  # retrieval — blue
+    "agent_with_tools":      {"fill": "#7c2d12", "stroke": "#fa552e", "color": "#fed7aa"},  # agentic — Mistral orange
+    "document_ai_pipeline":  {"fill": "#064e3b", "stroke": "#10b981", "color": "#d1fae5"},  # document — green
+    "fine_tuned_domain":     {"fill": "#581c87", "stroke": "#a855f7", "color": "#f3e8ff"},  # domain — purple
+    "hybrid_retrieval":      {"fill": "#134e4a", "stroke": "#14b8a6", "color": "#ccfbf1"},  # hybrid — teal
+}
+
+
+def _decorate_mermaid(body: str, pattern: str) -> str:
+    """Append a `classDef` + `class` line to apply the pattern's color to
+    every node in the mermaid body. If the pattern isn't recognised, return
+    the body unchanged.
+
+    Mermaid syntax: nodes get a default class, and `classDef <name> fill:...`
+    sets the style. We use one class for the whole graph so the entire flow
+    reads as belonging to the same blueprint family.
+    """
+    palette = _BLUEPRINT_COLORS.get(pattern)
+    if not palette or not body:
+        return body
+    cls = f"bp_{pattern}"
+    style = (
+        f"classDef {cls} fill:{palette['fill']},stroke:{palette['stroke']},"
+        f"color:{palette['color']},stroke-width:1.5px"
+    )
+    # Match every node id at line start (mermaid graph nodes typically start
+    # with a non-whitespace token followed by [ ( { or ->.
+    import re as _re
+    node_ids: set[str] = set()
+    for line in body.splitlines():
+        m = _re.match(r"\s*([A-Za-z_][\w]*)\s*[\[\(\{]", line)
+        if m:
+            node_ids.add(m.group(1))
+    if not node_ids:
+        return body
+    return body + "\n" + style + "\n" + "class " + ",".join(sorted(node_ids)) + f" {cls}"
+
+
 def _impact_badge_variant(uc: EnrichedUseCase) -> str:
     return {"high": "success", "medium": "default", "low": "secondary"}.get(
         uc.impact_tier.value, "default"
@@ -97,7 +140,8 @@ def _format_use_case_md(uc: EnrichedUseCase, specificity: float | None) -> str:
         parts.append(f"_Specificity score: {specificity:.2f}_")
     cleaned_mermaid = _clean_mermaid(uc.blueprint_mermaid)
     if cleaned_mermaid:
-        parts.append("\n**Architecture blueprint:**\n```mermaid\n" + cleaned_mermaid + "\n```")
+        decorated = _decorate_mermaid(cleaned_mermaid, uc.blueprint_pattern.value)
+        parts.append("\n**Architecture blueprint:**\n```mermaid\n" + decorated + "\n```")
     return "\n".join(parts)
 
 

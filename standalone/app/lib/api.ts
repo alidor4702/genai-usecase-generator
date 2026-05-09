@@ -35,6 +35,7 @@ export type StatusResponse = {
 };
 
 export type TraceEvent = {
+  id: string;
   step: string;
   actor: string;
   action: string;
@@ -44,6 +45,8 @@ export type TraceEvent = {
   inputs_summary: string | null;
   outputs_summary: string | null;
   error: string | null;
+  // `running` flips false the moment we receive `step_complete` for the same id
+  running?: boolean;
 };
 
 export type ReportResponse = {
@@ -93,12 +96,33 @@ export function subscribeToEvents(
   onError?: (e: Event) => void,
 ): () => void {
   const es = new EventSource(`${API}/events/${runId}`);
+  // Legacy unnamed SSE messages — keep for backward compat with older API
   es.addEventListener("message", (m) => {
     try {
       const data = JSON.parse((m as MessageEvent<string>).data);
       onEvent(data as TraceEvent);
     } catch {
       // ignore parse errors
+    }
+  });
+  // Live feed: step_start fires the instant an activity begins (not when it
+  // ends), so the UI can render a "running" card immediately. step_complete
+  // fires when the activity finishes — caller merges by `id` to flip the
+  // running card into a finished one with duration + outputs_summary.
+  es.addEventListener("step_start", (m) => {
+    try {
+      const data = JSON.parse((m as MessageEvent<string>).data);
+      onEvent({ ...data, running: true } as TraceEvent);
+    } catch {
+      // ignore
+    }
+  });
+  es.addEventListener("step_complete", (m) => {
+    try {
+      const data = JSON.parse((m as MessageEvent<string>).data);
+      onEvent({ ...data, running: false } as TraceEvent);
+    } catch {
+      // ignore
     }
   });
   es.addEventListener("progress", (m) => {

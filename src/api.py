@@ -214,33 +214,56 @@ async def events(run_id: str) -> StreamingResponse:
 
     async def event_generator() -> AsyncIterator[bytes]:
         last_idx = 0
+        completed_emitted: set[str] = set()
         while True:
             state = _runs.get(run_id)
             if state is None:
                 yield b"event: error\ndata: run not found\n\n"
                 return
-            # Emit any new trace events
+            # Emit trace events as they arrive AND when they complete.
+            # `last_idx` advances past events we've emitted "start" for; the
+            # `completed_emitted` set tracks events whose "complete" we've
+            # already pushed. Net effect: each step produces a `step_start`
+            # event when it begins, and a `step_complete` event when it ends —
+            # so the live feed updates during work, not just after it.
             if state.trace is not None:
                 trace_events = state.trace.events
                 while last_idx < len(trace_events):
                     ev = trace_events[last_idx]
                     payload = json.dumps(
                         {
+                            "id": ev.id,
                             "step": ev.step,
                             "actor": ev.actor,
                             "action": ev.action,
                             "started_at": ev.started_at.isoformat(),
-                            "completed_at": (
-                                ev.completed_at.isoformat() if ev.completed_at else None
-                            ),
-                            "duration_ms": ev.duration_ms,
                             "inputs_summary": ev.inputs_summary,
-                            "outputs_summary": ev.outputs_summary,
-                            "error": ev.error,
                         }
                     )
-                    yield f"data: {payload}\n\n".encode("utf-8")
+                    yield f"event: step_start\ndata: {payload}\n\n".encode("utf-8")
                     last_idx += 1
+                # Re-scan the list for any completed events we haven't emitted
+                # the completion for yet. Each complete carries the same `id`
+                # as the start, so the frontend can update the in-progress
+                # card in place.
+                for ev in trace_events:
+                    if ev.completed_at is not None and ev.id not in completed_emitted:
+                        payload = json.dumps(
+                            {
+                                "id": ev.id,
+                                "step": ev.step,
+                                "actor": ev.actor,
+                                "action": ev.action,
+                                "started_at": ev.started_at.isoformat(),
+                                "completed_at": ev.completed_at.isoformat(),
+                                "duration_ms": ev.duration_ms,
+                                "inputs_summary": ev.inputs_summary,
+                                "outputs_summary": ev.outputs_summary,
+                                "error": ev.error,
+                            }
+                        )
+                        yield f"event: step_complete\ndata: {payload}\n\n".encode("utf-8")
+                        completed_emitted.add(ev.id)
             # Emit step + progress every poll so the UI can render a progress bar
             yield (
                 f"event: progress\ndata: "

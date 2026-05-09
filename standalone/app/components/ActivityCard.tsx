@@ -17,7 +17,10 @@ export default function ActivityCard({ event, index }: { event: TraceEvent; inde
     tone: "from-slate-500/20 to-slate-500/0",
   };
 
-  const inFlight = event.duration_ms === null;
+  // `running` is the explicit flag set by the SSE merge logic (step_start →
+  // running, step_complete → !running). `duration_ms === null` is a fallback
+  // for legacy events without an id that never receive a separate complete.
+  const inFlight = event.running === true || (event.running === undefined && event.duration_ms === null);
   const ts = new Date(event.started_at).toLocaleTimeString(undefined, {
     hour: "2-digit",
     minute: "2-digit",

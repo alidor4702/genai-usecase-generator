@@ -35,6 +35,7 @@ export const STEP_TO_PHASE: Record<string, PhaseKey> = {
   attribution_check: "enrich",
   regen_one: "enrich",
   meta_eval: "review",
+  web_verify: "review",
   quality_signals: "review",
 };
 
@@ -114,6 +115,12 @@ export const STEP_DISPLAY: Record<
     verb: "Senior-reviewer pass: would a Mistral SE pitch this? Per-claim fact-check.",
     emoji: "🎓",
     tone: "from-violet-500/30 to-violet-500/0",
+  },
+  web_verify: {
+    title: "Rescuing flagged claims via web search",
+    verb: "Two-tier credibility: allowlist domains auto-promote, others promote on entity/number anchor match",
+    emoji: "🌐",
+    tone: "from-indigo-500/30 to-indigo-500/0",
   },
   quality_signals: {
     title: "Computing quality signals",
