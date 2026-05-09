@@ -251,7 +251,21 @@ async def events(run_id: str) -> StreamingResponse:
                 return
             await asyncio.sleep(0.5)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    # Headers that disable buffering across the chain:
+    #   X-Accel-Buffering: no   — tells nginx / Render proxy not to buffer
+    #   Cache-Control: no-cache — prevents intermediaries from caching
+    #   Connection: keep-alive  — long-lived connection
+    # Combined with `text/event-stream` content type, this ensures every
+    # `yield` flushes immediately to the browser.
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ----------------------------------------------------------------------------

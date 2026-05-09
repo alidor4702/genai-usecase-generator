@@ -52,7 +52,14 @@ export type ReportResponse = {
   markdown: string;
 };
 
-const API = "/api"; // Next rewrites /api/* to FastAPI
+// Bypass Next.js rewrite proxy when NEXT_PUBLIC_API_URL is set — Next's
+// dev rewrite buffers SSE responses (well-known issue), so the live event
+// stream stalls until the run completes. Setting NEXT_PUBLIC_API_URL to
+// the backend URL (e.g. http://localhost:8000) hits the FastAPI server
+// directly. CORS on the backend is wide-open in dev so this just works.
+const API =
+  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) ||
+  "/api";
 
 export async function postGenerate(req: GenerateRequest): Promise<{ run_id: string }> {
   const r = await fetch(`${API}/generate`, {

@@ -118,7 +118,7 @@ export default function Page() {
   return (
     <>
       <AnimatedBackground />
-      <main className="relative min-h-screen px-4 sm:px-8 py-10 max-w-6xl mx-auto">
+      <main className="relative z-10 min-h-screen px-4 sm:px-8 py-10 max-w-6xl mx-auto">
         <Hero phase={phase} companyName={companyName} status={status} progress={progress} />
 
         {phase === "form" && (
