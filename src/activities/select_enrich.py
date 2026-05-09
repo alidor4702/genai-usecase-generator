@@ -20,6 +20,7 @@ from datetime import timedelta
 import mistralai.workflows as workflows
 from mistralai.client import Mistral
 
+from src._clients import mistral_client
 from src.config import settings
 from src.trace import trace_step
 from src.models import (
@@ -43,13 +44,7 @@ from src.prompts import ENRICHMENT_SYSTEM
 logger = logging.getLogger(__name__)
 
 
-def _strip_fence(s: str) -> str:
-    s = s.strip()
-    if s.startswith("```"):
-        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
-        if s.endswith("```"):
-            s = s[:-3]
-    return s.strip()
+from src._util import strip_fence as _strip_fence  # noqa: E402
 
 
 def _coerce_str_list(v: object) -> list[str]:
@@ -841,7 +836,7 @@ async def regen_one_use_case_activity(
     if not settings.mistral_api_key:
         raise RuntimeError("MISTRAL_API_KEY required for regen")
 
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
     user = (
         "# Target company context\n"
         + ctx.model_dump_json(indent=2)
@@ -969,7 +964,7 @@ async def select_and_enrich_activity(
         for p in retrieved.items:
             precedent_lookup[p.id] = (p.deep_content or p.description or "")
 
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
     user_msg = _build_user_message(final, appendix, verdicts, ctx, ledger)
     # Tier dispatch: fast uses mistral-medium for enrichment (faster, slight
     # quality drop on prose polish but full guardrails preserved); standard

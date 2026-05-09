@@ -37,6 +37,7 @@ from mistralai.client import Mistral
 from scripts._fetch import extract_main_text, fetch_html
 from src.config import settings
 from src.criteria import render_criteria_for_prompt
+from src._clients import mistral_client
 from src.evidence import from_tavily_result
 from src.trace import trace_step
 from src.models import (
@@ -292,13 +293,7 @@ def _avg_pairwise_cosine(matrix: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _strip_fence(s: str) -> str:
-    s = s.strip()
-    if s.startswith("```"):
-        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
-        if s.endswith("```"):
-            s = s[:-3]
-    return s.strip()
+from src._util import strip_fence as _strip_fence  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -616,7 +611,7 @@ async def generate_candidates_activity(
     if ledger is None:
         ledger = EvidenceLedger()
 
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
 
     # First attempt
     user_msg = _build_user_message(

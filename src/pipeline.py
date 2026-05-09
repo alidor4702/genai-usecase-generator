@@ -76,7 +76,7 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
 
     # Step 1 — Research
     log.info("=== Step 1: Research ===")
-    ctx, ledger = await research_company_activity(params.company_name, params.research_depth)
+    ctx, ledger, bundle = await research_company_activity(params.company_name, params.research_depth)
     log.info(
         "research_confidence=%.2f | is_verified=%s | industry=%s | sources=%s | ledger=%d",
         ctx.meta.research_confidence,
@@ -86,9 +86,10 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
         len(ledger.entries),
     )
 
-    # Step 1b — Context completion (gap-fill)
+    # Step 1b — Context completion (gap-fill). Pass the original bundle through
+    # so re-synthesis uses the same depth signal instead of re-fetching at LOW.
     log.info("=== Step 1b: Context completion (gap-fill) ===")
-    ctx, ledger = await enrich_company_context_activity(ctx, ledger)
+    ctx, ledger = await enrich_company_context_activity(ctx, ledger, bundle)
     log.info(
         "after enrich: confidence=%.2f | industry=%s | priorities=%d | data_assets=%d | ledger=%d",
         ctx.meta.research_confidence,

@@ -24,6 +24,7 @@ from mistralai.client import Mistral
 from tavily import AsyncTavilyClient
 
 from scripts._fetch import extract_main_text, fetch_html
+from src._clients import mistral_client
 from src.config import settings
 from src.evidence import from_tavily_result
 from src.trace import trace_step
@@ -41,13 +42,7 @@ from src.prompts import VERIFICATION_SYSTEM
 logger = logging.getLogger(__name__)
 
 
-def _strip_fence(s: str) -> str:
-    s = s.strip()
-    if s.startswith("```"):
-        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
-        if s.endswith("```"):
-            s = s[:-3]
-    return s.strip()
+from src._util import strip_fence as _strip_fence  # noqa: E402
 
 
 def _candidate_query(company_name: str, sc: ScoredCandidate) -> str:
@@ -214,7 +209,7 @@ async def verify_top_candidates_activity(
             ledger,
         )
 
-    mistral = Mistral(api_key=settings.mistral_api_key)
+    mistral = mistral_client()
     tavily = AsyncTavilyClient(api_key=settings.tavily_api_key)
     sem = asyncio.Semaphore(3)
     async with httpx.AsyncClient(headers={"User-Agent": settings.user_agent}) as http:

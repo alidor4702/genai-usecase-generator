@@ -20,6 +20,7 @@ from datetime import timedelta
 import mistralai.workflows as workflows
 from mistralai.client import Mistral
 
+from src._clients import mistral_client
 from src.config import settings
 from src.criteria import render_criteria_for_prompt
 from src.trace import trace_step
@@ -70,13 +71,7 @@ def _build_user_message(batch: CandidateBatch, ctx: CompanyContext) -> str:
     )
 
 
-def _strip_fence(s: str) -> str:
-    s = s.strip()
-    if s.startswith("```"):
-        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
-        if s.endswith("```"):
-            s = s[:-3]
-    return s.strip()
+from src._util import strip_fence as _strip_fence  # noqa: E402
 
 
 async def _score_pass(
@@ -202,7 +197,7 @@ async def score_candidates_activity(
 ) -> ScoredBatch:
     if not settings.mistral_api_key:
         raise RuntimeError("MISTRAL_API_KEY required for scoring")
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
     user_msg = _build_user_message(batch, ctx)
 
     pass_a, pass_b = await asyncio.gather(

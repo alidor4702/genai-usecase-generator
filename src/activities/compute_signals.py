@@ -19,6 +19,7 @@ from datetime import timedelta
 import mistralai.workflows as workflows
 from mistralai.client import Mistral
 
+from src._clients import mistral_client
 from src.config import settings
 from src.models import (
     CompanyContext,
@@ -199,7 +200,7 @@ async def compute_quality_signals_activity(
 ) -> QualitySignals:
     if not settings.mistral_api_key:
         raise RuntimeError("MISTRAL_API_KEY required for quality-signals embedding")
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
     descriptions = [uc.description for uc in uses]
     if descriptions:
         resp = await client.embeddings.create_async(

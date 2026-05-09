@@ -23,7 +23,8 @@ from datetime import timedelta
 
 import httpx
 import mistralai.workflows as workflows
-from mistralai.client import Mistral
+
+from src._clients import mistral_client
 
 from src.config import settings
 from src.evidence import (
@@ -224,19 +225,13 @@ async def _gather_research_bundle(
     return bundle, live_sources
 
 
-def _strip_fence(s: str) -> str:
-    s = s.strip()
-    if s.startswith("```"):
-        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
-        if s.endswith("```"):
-            s = s[:-3]
-    return s.strip()
+from src._util import strip_fence as _strip_fence  # backward-compatible alias
 
 
 async def _synthesize_company_context(name: str, bundle: ResearchBundle) -> CompanyContext:
     if not settings.mistral_api_key:
         raise RuntimeError("MISTRAL_API_KEY required for research synthesis")
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
     user = _build_synthesis_prompt(name, bundle)
     async with trace_step(
         "research",
@@ -448,14 +443,20 @@ def _seed_ledger_from_bundle(
 @workflows.activity(start_to_close_timeout=timedelta(seconds=120))
 async def research_company_activity(
     company_name: str, depth: ResearchDepth = ResearchDepth.MEDIUM
-) -> tuple[CompanyContext, EvidenceLedger]:
+) -> tuple[CompanyContext, EvidenceLedger, ResearchBundle]:
     """Workflow activity: gather the research bundle + synthesize CompanyContext.
 
-    Also returns an EvidenceLedger seeded with every external source the
-    research step read — Wikipedia summary, each news article's deep-read
-    body, each existing-initiative source URL, and any live-verification
-    Tavily hits. The ledger threads through the pipeline so downstream steps
-    can pin claims to specific source content.
+    Returns the synthesized CompanyContext, an EvidenceLedger seeded with every
+    external source the research step read (Wikipedia summary, each news
+    article's deep-read body, each existing-initiative source URL, and any
+    live-verification Tavily hits), AND the raw ResearchBundle so the gap-fill
+    step can re-use it instead of re-fetching everything from cache.
+
+    The ledger threads through the pipeline so downstream steps can pin claims
+    to specific source content. The bundle is the unprocessed signal slice that
+    the synthesizer flattened — keeping it lets gap-fill re-synthesize with the
+    same depth (medium/high) the original call used, instead of dropping to
+    `low` like the previous re-fetch path did.
     """
     logger.info("research start: company=%s depth=%s", company_name, depth.value)
     bundle, live_sources = await _gather_research_bundle(company_name, depth)
@@ -471,7 +472,7 @@ async def research_company_activity(
         ctx.meta.research_sources,
         len(ledger.entries),
     )
-    return ctx, ledger
+    return ctx, ledger, bundle
 
 
 async def gather_bundle_for_company(
@@ -565,7 +566,7 @@ async def _generate_gap_queries(
     if not settings.mistral_api_key:
         return [(f, _fallback_query_for(company_name, f)) for f in missing_fields]
 
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
     user = (
         f"Company: {company_name}\n\n"
         f"Wikipedia excerpt:\n{(wiki_summary or '(none)')[:600]}\n\n"
@@ -645,7 +646,7 @@ async def _layer2_extract_field(
         f"Text:\n{gap_block[:6000]}\n\n"
         'Output STRICT JSON: {"items": ["...", "..."]}'
     )
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
     try:
         async with trace_step(
             "gap_fill",
@@ -728,7 +729,7 @@ async def _resynthesize_with_extra_signals(
     """Re-run the synthesis call with the extra signal block appended."""
     if not settings.mistral_api_key:
         raise RuntimeError("MISTRAL_API_KEY required for re-synthesis")
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
     user = (
         _build_synthesis_prompt(name, bundle)
         + "\n\n## Additional targeted research — TRUSTED SIGNALS (gap-filling pass)\n"

@@ -22,8 +22,7 @@ from __future__ import annotations
 
 import logging
 
-from mistralai.client import Mistral
-
+from src._clients import mistral_client
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -81,7 +80,7 @@ async def derive_clean_industry_label(
         logger.warning("industry: MISTRAL_API_KEY missing, returning raw_label as-is")
         return raw_wikidata_label
 
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
     user_parts = [f"Wikipedia summary:\n{(summary or '(none)')[:2500]}"]
     if raw_wikidata_label:
         user_parts.append(f"\n(Wikidata hint, may be junk: {raw_wikidata_label})")

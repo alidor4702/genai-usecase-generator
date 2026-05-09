@@ -206,11 +206,11 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         self.current_step = "research"
         self.progress_percent = 5.0
 
-        ctx, ledger = await research_company_activity(params.company_name, params.research_depth)
+        ctx, ledger, bundle = await research_company_activity(params.company_name, params.research_depth)
 
         self.current_step = "enrich_context"
         self.progress_percent = 12.0
-        ctx, ledger = await enrich_company_context_activity(ctx, ledger)
+        ctx, ledger = await enrich_company_context_activity(ctx, ledger, bundle)
         logger.info("workflow: evidence ledger seeded with %d entries", len(ledger.entries))
 
         # Confidence gate (after the context-completion pass)

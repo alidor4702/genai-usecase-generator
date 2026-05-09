@@ -14,8 +14,8 @@ import logging
 from datetime import timedelta
 
 import mistralai.workflows as workflows
-from mistralai.client import Mistral
 
+from src._clients import mistral_client
 from src.config import settings
 from src.models import CompanyContext, RetrievedPrecedents
 from src.precedents import retrieve_top_k
@@ -46,7 +46,7 @@ async def retrieve_precedents_activity(
 ) -> RetrievedPrecedents:
     if not settings.mistral_api_key:
         raise RuntimeError("MISTRAL_API_KEY required for retrieval embedding")
-    client = Mistral(api_key=settings.mistral_api_key)
+    client = mistral_client()
     query_text = _company_query_text(ctx)
     async with trace_step(
         "retrieve",
