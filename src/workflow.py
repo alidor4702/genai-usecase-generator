@@ -57,6 +57,7 @@ with _temporal_workflow.unsafe.imports_passed_through():
     from src.activities.score import score_candidates_activity
     from src.activities.select_enrich import select_and_enrich_activity
     from src.activities.verify_per_candidate import verify_top_candidates_activity
+    from src.activities.web_verify import web_verify_unsupported_claims_activity
     from src.config import settings
     from src.ui.render import render_report_to_components, render_report_to_markdown
 
@@ -254,6 +255,12 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         self.progress_percent = 88.0
         review, fact_claims = await meta_evaluate_activity(
             enriched_uses, rejected, ctx, retrieved=retrieved, ledger=ledger
+        )
+
+        self.current_step = "web_verify"
+        self.progress_percent = 91.0
+        review, fact_claims, ledger = await web_verify_unsupported_claims_activity(
+            review, fact_claims, ctx.identity.name, ledger
         )
 
         self.current_step = "quality_signals"

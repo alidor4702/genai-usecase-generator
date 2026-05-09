@@ -296,6 +296,7 @@ class EvidenceKind(StrEnum):
     GAP_FILL = "gap_fill"
     GENERATION_TOOL = "generation_tool"
     PER_CANDIDATE_VERIFICATION = "per_candidate_verification"
+    CLAIM_VERIFICATION = "claim_verification"  # post-meta-eval rescue search
 
 
 class EvidenceItem(BaseModel):
@@ -434,11 +435,23 @@ class ScoredBatch(BaseModel):
 # ----------------------------------------------------------------------------
 
 
+class SupportingSnippet(BaseModel):
+    """A claim-supporting excerpt the verifier extracted while doing duplicate
+    detection. Flowed into the EvidenceLedger so enrichment + meta-eval see
+    these per-candidate Tavily fetches as grounding (not just dup-check input).
+    """
+
+    quote: str
+    url: str
+    title: str | None = None
+
+
 class VerificationResult(BaseModel):
     candidate_id: str
     verdict: VerificationVerdict
     rationale: str
     sources_consulted: list[str] = Field(default_factory=list)
+    supporting_snippets: list[SupportingSnippet] = Field(default_factory=list)
 
 
 class VerificationBatch(BaseModel):
@@ -453,9 +466,30 @@ class VerificationBatch(BaseModel):
 # ----------------------------------------------------------------------------
 
 
+class TimeToValueBasis(StrEnum):
+    """Why we trust the time_to_value estimate.
+
+    `precedent` — anchored to ≥1 cited peer deployment in the corpus; the
+        figure should match (or near-match) something in that precedent's
+        content. The fact-checker treats this as a substantive claim.
+    `ballpark_assumption` — no comparable precedent exists. The model is
+        making an honest engineering ballpark based on the candidate's
+        complexity tier + scope. Customer should treat as estimate, not fact.
+        The fact-checker SKIPS these in the claims list (they're explicitly
+        flagged as not-a-claim, not fabrication).
+    `unknown` — model cannot reasonably estimate at all (rare).
+    """
+
+    PRECEDENT = "precedent"
+    BALLPARK_ASSUMPTION = "ballpark_assumption"
+    UNKNOWN = "unknown"
+
+
 class TimeToValue(BaseModel):
     estimate: str  # e.g. "8-16 weeks" or "unknown"
     anchored_to: list[str] = Field(default_factory=list)  # precedent IDs
+    basis: TimeToValueBasis = TimeToValueBasis.UNKNOWN
+    rationale: str | None = None  # one-line WHY for ballpark_assumption
 
 
 class EnrichedUseCase(BaseModel):
@@ -495,6 +529,15 @@ class FactCheckEntry(BaseModel):
     use_case_id: str
     passed: bool
     rationale: str | None = None
+    # Set by the post-meta-eval web-verify rescue layer when a claim was
+    # promoted from passed=False → passed=True via a fresh Tavily search.
+    # "verified"     — source was on the curated allowlist (company-official,
+    #                  major business press, government/EU regulator).
+    # "corroborated" — non-allowlist source but entity+number anchor matched.
+    # None           — passed via the normal evidence-pool fact-check, no
+    #                  rescue happened.
+    rescue_tier: Literal["verified", "corroborated"] | None = None
+    rescue_url: str | None = None
 
 
 class QualitySignals(BaseModel):

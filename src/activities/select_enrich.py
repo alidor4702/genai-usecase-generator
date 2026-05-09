@@ -22,7 +22,6 @@ from mistralai.client import Mistral
 
 from src._clients import mistral_client
 from src.config import settings
-from src.trace import trace_step
 from src.models import (
     BlueprintPattern,
     CompanyContext,
@@ -35,11 +34,14 @@ from src.models import (
     RetrievedPrecedents,
     ScoredBatch,
     ScoredCandidate,
+    SupportingSnippet,
     TimeToValue,
+    TimeToValueBasis,
     VerificationBatch,
     VerificationVerdict,
 )
 from src.prompts import ENRICHMENT_SYSTEM
+from src.trace import trace_step
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,28 @@ def _normalize_for_anchor_check(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip().lower())
 
 
+def _format_pool_excerpts(ledger: EvidenceLedger, max_entries: int = 40, excerpt_chars: int = 600) -> str:
+    """Render the full ledger as compact excerpts for the polish prompt.
+
+    Polish needs to verify quant claims against ALL retrieved evidence, not
+    just what the model explicitly cited. Capped at 40 entries × 600 chars to
+    stay within Mistral Small's token budget. Empty-content entries are
+    skipped — they can't anchor numbers anyway.
+    """
+    parts: list[str] = []
+    for item in ledger.entries[:max_entries]:
+        body = (item.content or "").strip()
+        if not body:
+            continue
+        excerpt = re.sub(r"\s+", " ", body)[:excerpt_chars]
+        parts.append(
+            f"  [{item.id}] title={item.title[:90]!r}\n"
+            f"    url={item.url or '(none)'}\n"
+            f"    excerpt: {excerpt}"
+        )
+    return "\n".join(parts) or "  (pool is empty)"
+
+
 def _extract_digit_signature(claim: str) -> str:
     """Return only the digits + meaningful unit chars from a numeric claim
     so we can match across small whitespace/case differences. e.g.
@@ -109,20 +133,33 @@ def _extract_digit_signature(claim: str) -> str:
 
 def _build_anchored_corpus(
     inspired_by: list[str],
-    evidence_ids: list[str],
+    evidence_ids: list[str],  # noqa: ARG001 — kept for signature stability; we now use the full ledger
     precedent_lookup: dict[str, str],
     ledger: EvidenceLedger,
 ) -> str:
-    """Concatenate the deep_content of every cited precedent + ledger entry
-    so we can substring-search numeric claims against the union."""
+    """Concatenate the deep_content of every cited precedent + EVERY ledger
+    entry so we can substring-search numeric claims against the full pool.
+
+    Earlier this function only consumed entries whose ids were in
+    `evidence_ids` (claims the LLM explicitly cited). That under-anchored real
+    facts: e.g. Carrefour's "14,000 stores" appears in the Wikipedia ledger
+    entry but the use case rarely cites Wikipedia by id, so the regex
+    scrubber wrapped the number as `[unanchored: 14,000]` and polish later
+    stripped it. Meta-eval, downstream of polish, then never saw the number
+    to verify.
+
+    Widening the anchored corpus to the full ledger preserves any number
+    that has support anywhere in the pipeline's evidence pool, while the
+    citation step (later in polish) still attributes them to a specific
+    source via the `cited_evidence_ids` map.
+    """
     chunks: list[str] = []
     for pid in inspired_by:
         body = precedent_lookup.get(pid, "")
         if body:
             chunks.append(body)
-    for eid in evidence_ids:
-        item = ledger.by_id(eid)
-        if item is not None and item.content:
+    for item in ledger.entries:
+        if item.content:
             chunks.append(item.content)
     return "\n".join(chunks)
 
@@ -231,6 +268,7 @@ def _format_top3_input(
     final: list[ScoredCandidate],
     verdicts: dict[str, VerificationVerdict],
     ledger: EvidenceLedger | None = None,
+    snippets_by_id: dict[str, list[SupportingSnippet]] | None = None,
 ) -> str:
     out: list[str] = []
     for sc in final:
@@ -247,6 +285,20 @@ def _format_top3_input(
         evidence_block = (
             "\n".join(evidence_lines) if evidence_lines else "  (none — purely context-grounded)"
         )
+
+        snip_block = ""
+        snips = (snippets_by_id or {}).get(c.id, [])
+        if snips:
+            snip_lines = "\n".join(
+                f'  - "{s.quote[:280]}" — {s.title or s.url} ({s.url})' for s in snips
+            )
+            snip_block = (
+                "Verifier-extracted supporting snippets (use these as PRIMARY grounding "
+                "when writing description / why_this_company — they are claim-relevant "
+                "lines pulled live from per-candidate web searches):\n"
+                f"{snip_lines}\n"
+            )
+
         out.append(
             f"--- candidate_id: {c.id} ---\n"
             f"Title: {c.title}\n"
@@ -263,6 +315,7 @@ def _format_top3_input(
             f"Inspired_by: {', '.join(c.inspired_by) or '(empty — novel)'}\n"
             f"Grounded_in: {', '.join(c.grounded_in)}\n"
             f"Evidence_ids carried from generation:\n{evidence_block}\n"
+            + snip_block
         )
     return "\n".join(out)
 
@@ -282,12 +335,13 @@ def _build_user_message(
     verdicts: dict[str, VerificationVerdict],
     ctx: CompanyContext,
     ledger: EvidenceLedger | None = None,
+    snippets_by_id: dict[str, list[SupportingSnippet]] | None = None,
 ) -> str:
     return (
         "# Target company context\n"
         + ctx.model_dump_json(indent=2)
         + "\n\n# Verified top-3 candidates to enrich\n"
-        + _format_top3_input(final, verdicts, ledger)
+        + _format_top3_input(final, verdicts, ledger, snippets_by_id)
         + "\n\n# Near-misses (for the rejected_appendix)\n"
         + _format_near_misses(appendix)
         + "\n\nReturn STRICT JSON of shape:\n"
@@ -344,10 +398,38 @@ def _coerce_enriched(
     risk_text, dropped_r = _scrub_narrative_ids(risk_raw, valid)
     if isinstance(ttv_raw, dict):
         ttv_text, dropped_t = _scrub_narrative_ids(str(ttv_raw.get("estimate") or "unknown"), valid)
-        ttv = TimeToValue(estimate=ttv_text, anchored_to=list(ttv_raw.get("anchored_to") or []))
+        ttv_anchored = [str(p) for p in (ttv_raw.get("anchored_to") or []) if isinstance(p, str)]
+        basis_str = str(ttv_raw.get("basis") or "").strip().lower()
+        ttv_rationale = ttv_raw.get("rationale")
+        try:
+            ttv_basis = TimeToValueBasis(basis_str) if basis_str else TimeToValueBasis.UNKNOWN
+        except ValueError:
+            ttv_basis = TimeToValueBasis.UNKNOWN
+        # Infer basis when the model omitted it (back-compat).
+        if ttv_basis == TimeToValueBasis.UNKNOWN and ttv_text.strip().lower() != "unknown":
+            ttv_basis = TimeToValueBasis.PRECEDENT if ttv_anchored else TimeToValueBasis.BALLPARK_ASSUMPTION
+        # Hard enforcement: a "precedent" estimate REQUIRES a non-empty
+        # anchored_to. If the model claimed precedent without precedent IDs,
+        # demote to ballpark_assumption (or unknown if estimate is "unknown").
+        if ttv_basis == TimeToValueBasis.PRECEDENT and not ttv_anchored:
+            if ttv_text.strip().lower() == "unknown":
+                ttv_basis = TimeToValueBasis.UNKNOWN
+            else:
+                logger.warning(
+                    "select_enrich: TTV claimed basis=precedent but anchored_to is empty for %s; "
+                    "demoting to ballpark_assumption (estimate=%r)",
+                    scored.candidate.id, ttv_text,
+                )
+                ttv_basis = TimeToValueBasis.BALLPARK_ASSUMPTION
+        ttv = TimeToValue(
+            estimate=ttv_text,
+            anchored_to=ttv_anchored,
+            basis=ttv_basis,
+            rationale=(str(ttv_rationale).strip() if isinstance(ttv_rationale, str) and ttv_rationale.strip() else None),
+        )
     else:
         ttv_text, dropped_t = _scrub_narrative_ids(str(ttv_raw or "unknown"), valid)
-        ttv = TimeToValue(estimate=ttv_text)
+        ttv = TimeToValue(estimate=ttv_text, basis=TimeToValueBasis.UNKNOWN)
     total_dropped = dropped_d + dropped_w + dropped_r + dropped_t
     if total_dropped:
         logger.warning(
@@ -400,34 +482,38 @@ Transformations to apply, IN ORDER:
    the regex-based numeric scrubber wraps obvious patterns ($, %, M/B,
    weeks, x-multipliers) as `[unanchored: X]`, but it doesn't catch
    every unit (PB, TB, store counts, customer counts, country counts,
-   employee counts, dataset sizes in any unit). YOUR JOB is broader:
-   for ANY specific quantitative claim about THIS company's internals
-   that is NOT explicitly anchored to a cited source in the same
-   sentence, replace the specific number with qualitative language.
+   employee counts, dataset sizes in any unit). For ANY specific
+   quantitative claim about THIS company's internals (regardless of
+   whether the regex marked it), do this:
 
-   Examples — note the rule applies REGARDLESS of unit:
+   STEP 1 — CHECK THE FULL SOURCE POOL.
+   The user message includes a "## Full evidence pool" block listing every
+   ledger entry the pipeline retrieved (Wikipedia, news, gap-fill,
+   per-candidate verification, web_search). For each specific number in
+   the prose, scan the pool excerpts for that figure attached to the same
+   entity (or near-equivalent: "14,000 stores" matches "14000 stores",
+   "operates in 40 countries" matches "present in 40 countries", "10 PB"
+   matches "10-petabyte", etc.).
+
+   STEP 2 — IF FOUND in the pool, KEEP the number AND attach a citation.
+   Replace `[unanchored: X]` (if present) with `X [short anchor](url)`
+   pulled from the pool entry where you found support. If the number is
+   NOT inside an unanchored marker but you confirmed it from the pool,
+   leave the number as-is and append a citation in the same sentence.
+   ALSO add the ledger entry's `evidence_id` to the `cited_evidence_ids`
+   field in your output (a flat list of ev-IDs you newly cited).
+
+   STEP 3 — IF NOT FOUND anywhere in the pool, replace the specific number
+   with qualitative language. Examples:
      - "reduces audit time by [unanchored: 30%]" → "reduces audit time
        materially"
-     - "[unanchored: 8-15%] reduction" → "a meaningful reduction"
      - "$[unanchored: 4M] in fines" → "significant compliance fines"
-     - "L'Oréal's 10 PB data platform" → "L'Oréal's large-scale data
-       platform" (unit was PB; regex missed it; same rule applies)
-     - "operates 13,000 stores across 40 countries" → "operates a global
-       store network across many countries" (counts of stores and
-       countries are claims about company scale; unanchored unless cited)
-     - "5M corporate clients" → "millions of corporate clients" (M was
-       caught by regex but the same rule covers any unit)
-     - "$500B+ portfolio" → "a substantial portfolio"
-     - "1.5B+ active devices" → "a billion-scale active device base"
-       (acceptable softening; specific 1.5 figure dropped)
+     - "1.5B+ active devices" (and pool has no support) → "a billion-scale
+       active device base"
 
-   When a specific number IS supported by a cited source in the same
-   sentence (precedent reference, markdown link to a ledger URL),
-   KEEP IT. The rule is not "drop all numbers" — it's "drop any
-   number that doesn't have a citation right next to it."
-
-   The qualitative phrase must fit the sentence grammatically. NEVER
-   leave any `[unanchored: ...]` marker in the final output.
+   When a specific number IS already anchored in-sentence (precedent
+   reference, markdown link to a ledger URL), KEEP IT and don't touch it.
+   NEVER leave any `[unanchored: ...]` marker in the final output.
 
 2. OPAQUE LEDGER IDS — every `(ev-XXXXXXXXXX)` reference is an internal ID
    that must become a markdown link. The mapping {evidence_id → {title, url}}
@@ -460,7 +546,8 @@ Output STRICT JSON with the polished fields:
   "description": "...",
   "why_this_company": "...",
   "time_to_value": "...",
-  "top_implementation_risk": "..."
+  "top_implementation_risk": "...",
+  "cited_evidence_ids": ["ev-...", ...]   // pool entries you newly cited
 }
 """
 
@@ -667,14 +754,19 @@ async def _polish_use_case(
         )
         or "  (none — opaque (ev-XXX) IDs without mapping should be dropped)"
     )
+    pool_excerpts = _format_pool_excerpts(ledger)
     user = (
-        f"Source map (evidence_id → title/url):\n{source_map_block}\n\n"
+        f"Source map for opaque (ev-XXX) replacement:\n{source_map_block}\n\n"
+        f"## Full evidence pool (use these excerpts to verify quantitative claims "
+        f"before stripping; cite via cited_evidence_ids when you find support)\n"
+        f"{pool_excerpts}\n\n"
         f"Original description:\n{use_case.description}\n\n"
         f"Original why_this_company:\n{use_case.why_this_company}\n\n"
         f"Original time_to_value:\n{use_case.time_to_value.estimate}\n\n"
         f"Original top_implementation_risk:\n{use_case.top_implementation_risk}\n\n"
         'Output STRICT JSON: {"description": "...", "why_this_company": "...", '
-        '"time_to_value": "...", "top_implementation_risk": "..."}'
+        '"time_to_value": "...", "top_implementation_risk": "...", '
+        '"cited_evidence_ids": ["ev-...", ...]}'
     )
     try:
         async with trace_step(
@@ -712,6 +804,22 @@ async def _polish_use_case(
     new_risk = str(
         data.get("top_implementation_risk") or use_case.top_implementation_risk
     )
+
+    # Pick up any new ledger entries the polish step cited from the full pool
+    # so downstream meta-eval / fact-check sees them as supporting evidence.
+    newly_cited_raw = data.get("cited_evidence_ids") or []
+    if isinstance(newly_cited_raw, list):
+        valid_ids = {item.id for item in ledger.entries}
+        newly_cited = [
+            str(eid) for eid in newly_cited_raw
+            if isinstance(eid, str) and eid in valid_ids and eid not in use_case.evidence_ids
+        ]
+        if newly_cited:
+            use_case.evidence_ids = list(use_case.evidence_ids) + newly_cited
+            logger.info(
+                "polish: %s newly cited %d pool entries from full evidence pool: %s",
+                use_case.id, len(newly_cited), newly_cited[:6],
+            )
 
     # Final URL validation pass — strip any URL the LLM emitted that isn't in
     # the ledger (defense in depth against fabricated URLs).
@@ -965,7 +1073,10 @@ async def select_and_enrich_activity(
             precedent_lookup[p.id] = (p.deep_content or p.description or "")
 
     client = mistral_client()
-    user_msg = _build_user_message(final, appendix, verdicts, ctx, ledger)
+    snippets_by_id: dict[str, list[SupportingSnippet]] = {
+        r.candidate_id: list(r.supporting_snippets) for r in verified.results
+    }
+    user_msg = _build_user_message(final, appendix, verdicts, ctx, ledger, snippets_by_id)
     # Tier dispatch: fast uses mistral-medium for enrichment (faster, slight
     # quality drop on prose polish but full guardrails preserved); standard
     # and max use mistral-large per the locked stack.

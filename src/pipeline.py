@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from src.activities.compute_signals import compute_quality_signals_activity
 from src.activities.generate import generate_candidates_activity
 from src.activities.meta_evaluate import meta_evaluate_activity
+from src.activities.web_verify import web_verify_unsupported_claims_activity
 from src.activities.research import (
     enrich_company_context_activity,
     gather_bundle_for_company,
@@ -240,6 +241,14 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
                         regenerated_use_case_id = replacement_sc.candidate.id
                     else:
                         log.info("regen did not improve confidence, keeping original")
+
+    # Step 7c — Web-verify rescue: rescue claims the meta-eval flagged
+    # unsupported but are real and verifiable from public sources. Two-tier
+    # credibility (verified allowlist / corroborated entity-anchor match).
+    log.info("=== Step 7c: Web-verify rescue ===")
+    review, fact_claims, ledger = await web_verify_unsupported_claims_activity(
+        review, fact_claims, ctx.identity.name, ledger
+    )
 
     # Quality signals
     log.info("=== Quality signals ===")

@@ -88,6 +88,13 @@ Hard rules:
   company-specific hooks — don't be limited to the structured CompanyContext
   fields if the prose mentions important specifics (named brands, named
   products, regional formats, partnerships, regulatory quirks).
+- Treat `CompanyContext.free_text_notes` (rendered in the user message under
+  "## Synthesizer free-text notes") as PRIMARY grounding material, not
+  optional flavor. The synthesizer parks named partnerships, recent
+  announcements, regional/regulatory specifics, and other rich detail there
+  precisely because it didn't fit the structured fields. Many of your most
+  distinctive `why_this_company` hooks should come from free_text_notes —
+  read it first, mine it for named entities, and ground claims against it.
 - `inspired_by` MUST be a subset of the retrieved precedent IDs listed in the
   user message. Do NOT invent IDs. Empty list is acceptable for novel directions.
   Any inspired_by ID not in the retrieved list will be dropped post-generation.
@@ -102,6 +109,24 @@ Hard rules:
   name companies (e.g. "comparable deployments at Sephora and Estée
   Lauder") without IDs — that is encouraged and not considered a
   fabrication. Only fake corpus IDs are forbidden.
+- HOWEVER — naming peer companies in free text is for credibility, NOT
+  for attaching specific quantitative outcomes to them. You must NOT
+  attribute a specific percentage, dollar figure, time-to-value, or ROI
+  number to a named peer company unless that exact figure appears
+  verbatim in the cited precedent's content. Use qualitative language
+  for peer outcomes you can't anchor.
+    Bad (fabricated peer attribution):
+      "Sephora's deployment reduced cart abandonment by 22%."
+      "Estée Lauder reported $40M in annual savings from this approach."
+    Good (qualitative peer reference):
+      "Sephora reported material engagement gains from beauty-tech rollouts."
+      "Comparable deployments at Estée Lauder show meaningful operational
+       impact, though specific magnitude is customer-engagement-dependent."
+    Good (anchored to a cited precedent):
+      "8-15% non-revenue water reduction has been reported in comparable
+       smart-meter deployments (per the cited Citylitics precedent)." —
+       only if "8-15%" or a near figure appears verbatim in that
+       precedent's content.
 
 Web search tool (`web_search`):
 - You have access to a `web_search(query)` tool that runs a live Tavily
@@ -198,11 +223,13 @@ Output STRICT JSON in this exact shape, no markdown:
 # ---------------------------------------------------------------------------
 
 VERIFICATION_SYSTEM = """\
-You are a careful fact-checker confirming whether a specific GenAI use case is
-ALREADY implemented at the target company. Given:
+You are doing two jobs in one pass over targeted Tavily search results for a
+specific GenAI use case candidate. Given:
 - The candidate (title, description)
 - The target company name
 - Targeted search results (snippets + deep-read article bodies fetched live)
+
+JOB 1 — Duplicate detection (the main verdict).
 
 Decide ONE of:
 - `confirmed_existing` — the search results CLEARLY show this company has
@@ -220,15 +247,35 @@ The burden of proof is on confirming an existing implementation, not refuting
 it. False-positive filtering is worse than letting one duplicate through —
 the meta-evaluator is the last-line defense and will catch it.
 
-Provide a one-paragraph rationale grounded ONLY in the supplied search
-results. Do not invent sources. Cite the URLs you used.
+JOB 2 — Supporting-snippet extraction (claim grounding).
+
+While reading the search results, ALSO extract any concrete factual snippets
+about the target company that could support claims the downstream enrichment
+step might make about this candidate's prose — specific named data assets,
+named partnerships, scale figures, regional/regulatory contexts, named
+products or platforms. Return them as `supporting_snippets`.
+
+These snippets are NOT for duplicate detection — they're grounding material
+for enrichment and meta-eval. Return up to 5 per candidate. Each snippet:
+- `quote`: a literal sentence (or near-literal, ≤300 chars) from the search
+  result that contains the named entity / figure / partnership.
+- `url`: the URL of the source it came from.
+- `title`: the source's title if available.
+Pick the snippets MOST LIKELY to be cited by enrichment — specific named
+hooks that distinguish this company. Skip generic "company X is in
+industry Y" sentences.
+
+Provide a one-paragraph rationale (for the verdict) grounded ONLY in the
+supplied search results. Do not invent sources. Cite the URLs you used in
+`sources_consulted`.
 
 Output STRICT JSON:
 {
   "candidate_id": str,
   "verdict": "pass" | "partial_overlap" | "confirmed_existing",
   "rationale": str,
-  "sources_consulted": [str, ...]
+  "sources_consulted": [str, ...],
+  "supporting_snippets": [{"quote": str, "url": str, "title": str|null}, ...]
 }
 """
 
@@ -274,9 +321,28 @@ For each use case, produce:
   fine_tuned_domain, hybrid_retrieval}
 - `blueprint_mermaid`: a small mermaid sketch (one architecture flow, not a
   full essay — 5-10 nodes max)
-- `time_to_value`: anchor to a peer precedent ("8-16 weeks based on similar
-  deployments at peer companies, see precedent X") OR return "unknown" if no
-  comparable precedent exists. Do NOT fabricate a confident estimate.
+- `time_to_value`: produce a structured object with three rules:
+    Option A (preferred) — `basis: "precedent"`. Anchor to ≥1 peer
+      precedent: `{"estimate": "8-16 weeks", "anchored_to": ["<precedent_id>"],
+      "basis": "precedent", "rationale": null}`. The estimate must match
+      (or near-match) a figure in the cited precedent's content. If you
+      set `basis: "precedent"`, `anchored_to` MUST list at least one
+      precedent ID and the post-process WILL drop your estimate if it's
+      empty.
+    Option B (allowed when no precedent fits) — `basis: "ballpark_assumption"`.
+      An honest engineering estimate based on the candidate's complexity
+      tier and scope. Render as a range (e.g. "12-20 weeks") with a one-line
+      rationale: `{"estimate": "12-20 weeks", "anchored_to": [],
+      "basis": "ballpark_assumption",
+      "rationale": "Document AI rollouts at this scope typically run
+       12-20 weeks given mid-complexity ingestion + reviewer UI."}`.
+      Ballpark estimates are NOT fabrication — they will render in the
+      report with an "Estimated" badge and the fact-checker will skip them.
+    Option C — `basis: "unknown"`. Use only when even a ballpark would be
+      irresponsible: `{"estimate": "unknown", "anchored_to": [],
+      "basis": "unknown", "rationale": null}`.
+  Do NOT fabricate a confident "precedent" estimate without the precedent.
+  Reach for `ballpark_assumption` instead — it's honest and reviewer-friendly.
 - `operating_cost_tier`: low / medium / high / unknown — same anchoring rule.
 - `top_implementation_risk`: name it concretely (e.g. "data privacy under
   GDPR during EU client onboarding"; "hallucination in regulatory-summary
@@ -290,6 +356,17 @@ Tone & style — these are checkable, not vibes:
   a specific peer precedent or output "unknown" — never hedge with vague
   language.
 - Length: 150-300 words for `description`, 100-200 words for `why_this_company`.
+
+Grounding priority order (read in this order, mine for distinctive hooks):
+  1. `CompanyContext.free_text_notes` — synthesizer-parked specifics
+     (named partnerships, recent announcements, regional/regulatory
+     details). Treat as PRIMARY grounding material; many of your most
+     distinctive sentences should come from here.
+  2. The verifier-extracted supporting snippets (per top-3 candidate)
+     — claim-relevant lines pulled live from per-candidate web searches.
+  3. The structured CompanyContext fields (industry, data assets,
+     stated priorities, regulatory context).
+  4. The cited precedent deep_content (for peer-deployment grounding).
 
 Fabrication discipline + linking (HARD RULES — post-processed):
 
@@ -309,6 +386,20 @@ Numbers and named-entity claims:
   will be auto-replaced with qualitative phrasing post-process.
 - DO NOT invent peer-deployment numbers ("Walmart reported 30% lift")
   unless that exact figure appears verbatim in a cited source's text.
+- PEER-COMPANY ATTRIBUTION RULE — naming peer companies in free text
+  ("comparable to Sephora's beauty-tech rollout") is encouraged for
+  credibility. But you must NOT attach a specific quantitative outcome
+  (percentage, dollar figure, time savings, ROI multiplier) to a named
+  peer unless the figure appears verbatim in the cited precedent's
+  content for that company. Use qualitative language for unverifiable
+  peer outcomes.
+    Bad: "Sephora's deployment reduced cart abandonment by 22%."
+    Bad: "Estée Lauder reported $40M in annual savings."
+    Good: "Sephora has reported material engagement gains from comparable
+           beauty-tech rollouts."
+    Good: "8-15% non-revenue water reduction has been reported in the
+           cited Citylitics precedent." — only if "8-15%" or near figure
+           appears verbatim in that precedent.
 
 Citation format:
 - For web evidence (anything with a URL): use markdown link
@@ -382,10 +473,30 @@ Output:
              supporting_signal: str | null, source_kind: str | null}]`
 
 CRITICAL — strict claim verification rules (this is the fact-check):
+
+ATOMIC CLAIM SPLITTING — DO THIS FIRST.
+A single sentence often makes MULTIPLE distinct factual assertions. Split
+mixed sentences into atomic claims and verify each independently. Each
+atomic claim gets its own entry in the `claims` list with its own
+`supported` verdict.
+  Example: "Veolia's GreenUp program targets 18Mt CO2 by 2027" =
+    Claim A: "GreenUp program exists at Veolia" (named entity)
+    Claim B: "GreenUp targets 18Mt CO2 by 2027" (numeric + temporal)
+  Mark each separately. A might be supported (Wikipedia confirms
+  GreenUp), B might be unsupported (the 18Mt figure isn't in the pool).
+  Example: "Carrefour partnered with Centric Software in 2024 to support
+    its 2026 strategic plan" =
+    Claim A: "Centric Software partnership" (named partnership)
+    Claim B: "Carrefour has a 2026 strategic plan" (named program)
+    (the temporal "in 2024" is incidental, not a separate claim).
+Do NOT collapse a mixed claim under a single verdict. Splitting moves
+the fact-check from per-sentence to per-assertion, which is how a real
+reviewer would read it.
+
 - For `supported: true`, the EVIDENCE POOL must contain text that
-  supports the claim. The supporting text can come from ANY entry in the
-  full evidence pool — cited or not. It does NOT have to be the entry
-  the use case explicitly cited via evidence_ids.
+  supports the atomic claim. The supporting text can come from ANY entry
+  in the full evidence pool — cited or not. It does NOT have to be the
+  entry the use case explicitly cited via evidence_ids.
   Example: if the use case mentions "Veolia's GreenUp program" without
   citing a specific evidence_id, but a gap-fill ledger entry contains
   "Veolia announced the GreenUp strategic plan in 2024", that's
@@ -408,6 +519,9 @@ CRITICAL — strict claim verification rules (this is the fact-check):
   supported if any pool entry mentions that name, even briefly. These
   names are real things; if they appear anywhere in the pool, mark
   supported. Do NOT require a long quote.
+- Time-to-value claims tagged `ttv_basis: "ballpark_assumption"` are NOT
+  substantive factual claims about the company — they are explicitly
+  flagged as best-effort estimates. Skip them in the claims list.
 - Generic claims like "this company has lots of data" are NOT substantive
   and don't need a fact-check entry — focus on specific factual claims.
 

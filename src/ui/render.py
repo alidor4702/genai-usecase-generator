@@ -73,9 +73,16 @@ def _format_use_case_md(uc: EnrichedUseCase, specificity: float | None) -> str:
     parts.append("")
     parts.append(f"**Example output:** {uc.example_output}")
     parts.append("")
+    ttv_label = uc.time_to_value.estimate
+    if uc.time_to_value.basis.value == "ballpark_assumption":
+        ttv_label = f"~{uc.time_to_value.estimate} (estimated)"
+    elif uc.time_to_value.basis.value == "precedent":
+        ttv_label = f"{uc.time_to_value.estimate} (precedent-anchored)"
     parts.append(
-        f"**Blueprint:** `{uc.blueprint_pattern.value}` (impact: {uc.impact_tier.value} · cost: {uc.operating_cost_tier.value} · complexity: {uc.complexity_tier.value} · TTV: {uc.time_to_value.estimate})"
+        f"**Blueprint:** `{uc.blueprint_pattern.value}` (impact: {uc.impact_tier.value} · cost: {uc.operating_cost_tier.value} · complexity: {uc.complexity_tier.value} · TTV: {ttv_label})"
     )
+    if uc.time_to_value.basis.value == "ballpark_assumption" and uc.time_to_value.rationale:
+        parts.append(f"  _TTV rationale: {uc.time_to_value.rationale}_")
     parts.append("")
     parts.append(f"**Top risk:** {uc.top_implementation_risk}")
     parts.append("")
@@ -149,10 +156,26 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
                 )
             lines.append("")
         if passed:
-            lines.append(f"**Supported ({len(passed)}):**")
+            rescued = [c for c in passed if c.rescue_tier]
+            verified_n = sum(1 for c in rescued if c.rescue_tier == "verified")
+            corroborated_n = sum(1 for c in rescued if c.rescue_tier == "corroborated")
+            rescue_summary = ""
+            if rescued:
+                rescue_summary = (
+                    f" — **{len(rescued)} rescued via web search** "
+                    f"({verified_n} from allowlisted sources, {corroborated_n} corroborated)"
+                )
+            lines.append(f"**Supported ({len(passed)}):**{rescue_summary}")
             for c in passed:
                 src = c.rationale[:140] + "…" if c.rationale and len(c.rationale) > 140 else (c.rationale or "")
-                lines.append(f"- [{c.use_case_id}] {c.claim}{(' — ' + src) if src else ''}")
+                tier_badge = ""
+                if c.rescue_tier == "verified":
+                    tier_badge = " `[verified ↗]`"
+                elif c.rescue_tier == "corroborated":
+                    tier_badge = " `[corroborated ↗]`"
+                lines.append(
+                    f"- [{c.use_case_id}] {c.claim}{tier_badge}{(' — ' + src) if src else ''}"
+                )
             lines.append("")
         lines.append("</details>")
     if meta is not None:
@@ -247,7 +270,14 @@ def render_report_to_components(report: Report) -> Any:
                     children=f"Cost: {uc.operating_cost_tier.value}",
                 ),
                 Badge(variant="default", children=f"Complexity: {uc.complexity_tier.value}"),
-                Badge(variant="default", children=f"TTV: {uc.time_to_value.estimate}"),
+                Badge(
+                    variant=("warning" if uc.time_to_value.basis.value == "ballpark_assumption" else "default"),
+                    children=(
+                        f"TTV: ~{uc.time_to_value.estimate} (estimated)"
+                        if uc.time_to_value.basis.value == "ballpark_assumption"
+                        else f"TTV: {uc.time_to_value.estimate}"
+                    ),
+                ),
             ]
         )
         body = Markdown(content=_format_use_case_md(uc, spec_score))

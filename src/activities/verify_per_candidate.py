@@ -33,6 +33,7 @@ from src.models import (
     EvidenceKind,
     EvidenceLedger,
     ScoredCandidate,
+    SupportingSnippet,
     VerificationBatch,
     VerificationResult,
     VerificationVerdict,
@@ -163,12 +164,32 @@ async def _verify_one(
             verdict = VerificationVerdict(verdict_str)
         except ValueError:
             verdict = VerificationVerdict.PASS
+
+        snippets_raw = data.get("supporting_snippets") or []
+        snippets: list[SupportingSnippet] = []
+        if isinstance(snippets_raw, list):
+            for s in snippets_raw[:5]:
+                if not isinstance(s, dict):
+                    continue
+                quote = str(s.get("quote") or "").strip()
+                url = str(s.get("url") or "").strip()
+                if not quote or not url:
+                    continue
+                snippets.append(
+                    SupportingSnippet(
+                        quote=quote[:400],
+                        url=url,
+                        title=(str(s["title"]).strip() if s.get("title") else None),
+                    )
+                )
+
         return (
             VerificationResult(
                 candidate_id=sc.candidate.id,
                 verdict=verdict,
                 rationale=str(data.get("rationale", "")),
                 sources_consulted=list(data.get("sources_consulted") or urls),
+                supporting_snippets=snippets,
             ),
             fetched_sources,
         )
