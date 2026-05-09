@@ -134,7 +134,10 @@ async def _verify_one(
                 r = await mistral.chat.complete_async(
                     model=settings.mistral_verification_model,
                     temperature=0.1,
-                    max_tokens=1500,
+                    # Bumped from 1500 to 2500 — output now also carries up to
+                    # 5 supporting_snippets (≤300 chars each) per candidate
+                    # for the v6 grounding-extraction job. 1500 was tight.
+                    max_tokens=2500,
                     timeout_ms=90_000,
                     response_format={"type": "json_object"},
                     messages=[

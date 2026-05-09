@@ -19,6 +19,7 @@ Per docs/architecture.md, the structure is:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from src.models import (
@@ -78,10 +79,9 @@ def _decorate_mermaid(body: str, pattern: str) -> str:
     )
     # Match every node id at line start (mermaid graph nodes typically start
     # with a non-whitespace token followed by [ ( { or ->.
-    import re as _re
     node_ids: set[str] = set()
     for line in body.splitlines():
-        m = _re.match(r"\s*([A-Za-z_][\w]*)\s*[\[\(\{]", line)
+        m = re.match(r"\s*([A-Za-z_][\w]*)\s*[\[\(\{]", line)
         if m:
             node_ids.add(m.group(1))
     if not node_ids:
@@ -147,11 +147,9 @@ def _format_use_case_md(uc: EnrichedUseCase, specificity: float | None) -> str:
 
 def _summarize_ttv_spread(spreads: list[str]) -> str:
     """Render TTV as a terse summary, not concatenated full prose."""
-    import re as _re
-
     weeks: list[int] = []
     for s in spreads:
-        for m in _re.finditer(r"(\d+)\s*[-–]\s*(\d+)\s*weeks", s.lower()):
+        for m in re.finditer(r"(\d+)\s*[-–]\s*(\d+)\s*weeks", s.lower()):
             weeks.extend([int(m.group(1)), int(m.group(2))])
     if weeks:
         return f"{min(weeks)}–{max(weeks)} weeks (across {len(spreads)} use cases)"
@@ -213,10 +211,14 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
             for c in passed:
                 src = c.rationale[:140] + "…" if c.rationale and len(c.rationale) > 140 else (c.rationale or "")
                 tier_badge = ""
-                if c.rescue_tier == "verified":
-                    tier_badge = " `[verified ↗]`"
+                if c.rescue_tier == "verified" and c.rescue_url:
+                    tier_badge = f" [`verified ↗`]({c.rescue_url})"
+                elif c.rescue_tier == "verified":
+                    tier_badge = " `[verified]`"
+                elif c.rescue_tier == "corroborated" and c.rescue_url:
+                    tier_badge = f" [`corroborated ↗`]({c.rescue_url})"
                 elif c.rescue_tier == "corroborated":
-                    tier_badge = " `[corroborated ↗]`"
+                    tier_badge = " `[corroborated]`"
                 lines.append(
                     f"- [{c.use_case_id}] {c.claim}{tier_badge}{(' — ' + src) if src else ''}"
                 )
