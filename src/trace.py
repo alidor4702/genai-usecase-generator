@@ -198,7 +198,20 @@ def set_current_trace(t: RunTrace | None) -> None:
 
 
 def start_run_trace(company_name: str) -> RunTrace:
-    """Initialize a new trace for a company run and install it as current."""
+    """Initialize a trace for a company run and install it as current.
+
+    If a trace is already set in the current async context (e.g. the
+    FastAPI surface pre-created one so its SSE handler can read events
+    in real time), reuse that one instead of overwriting. This is what
+    makes live progress streaming work — `_execute_run` in api.py
+    creates the RunTrace, stores it on the run state, sets it via
+    set_current_trace, and then awaits execute_pipeline; if this
+    function blindly overwrote the contextvar, activities would write
+    into a fresh trace the API has no reference to.
+    """
+    existing = get_current_trace()
+    if existing is not None:
+        return existing
     t = RunTrace(company_name=company_name, started_at=datetime.now(timezone.utc))
     set_current_trace(t)
     return t

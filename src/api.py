@@ -40,7 +40,7 @@ from src.models import (
     WorkflowInput,
 )
 from src.pipeline import execute_pipeline
-from src.trace import RunTrace
+from src.trace import RunTrace, set_current_trace
 from src.ui.render import render_report_to_markdown
 
 logger = logging.getLogger(__name__)
@@ -279,9 +279,28 @@ async def _execute_run(run_id: str) -> None:
     state.started_at = datetime.now(timezone.utc)
     state.current_step = "research"
     state.progress_percent = 5.0
+
+    # Pre-create the run trace and store it on state BEFORE the pipeline
+    # runs. This is what makes the SSE event stream live — the
+    # /events/{run_id} handler reads state.trace.events as they're appended
+    # by activities. If we waited for execute_pipeline to return and only
+    # then assigned state.trace, the SSE handler would see no events for
+    # the entire ~4-minute run and dump them all at once at the end.
+    #
+    # set_current_trace installs it in this task's ContextVar; the
+    # execute_pipeline coroutine inherits the same context, and
+    # start_run_trace() inside it will reuse our pre-created trace
+    # instead of overwriting (see src/trace.py).
+    state.trace = RunTrace(
+        company_name=state.params.company_name,
+        started_at=state.started_at,
+    )
+    set_current_trace(state.trace)
+
     try:
         result = await execute_pipeline(state.params)
-        state.trace = result.trace  # populated, even on refusal
+        # result.trace is the same object we created above (start_run_trace
+        # reused it via the contextvar), so events are already on state.trace.
         if result.refused:
             state.status = "refused"
             state.refusal_reason = result.refusal_reason
