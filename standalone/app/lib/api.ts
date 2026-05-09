@@ -98,7 +98,11 @@ export type FactCheckEntry = {
 
 export type Report = {
   company: { identity: { name: string }; classification: { industry: string } };
-  use_cases: EnrichedUseCase[];
+  // Backend field is `top_use_cases` (Pydantic Report model). Earlier
+  // versions of this type had `use_cases` which would break at runtime
+  // the moment a report came back. Mirror the API shape exactly.
+  top_use_cases: EnrichedUseCase[];
+  rejected_appendix?: { title: string; one_line_reason: string }[];
   quality: {
     diversity: number;
     specificity_per_use_case: number[];
@@ -107,7 +111,10 @@ export type Report = {
   meta_review?: {
     confidence: number;
     sales_engineer_ready: boolean;
-  };
+    weakness_reason?: string | null;
+    cross_cutting_concern?: string | null;
+  } | null;
+  intro_text?: string;
 };
 
 export type ReportResponse = {

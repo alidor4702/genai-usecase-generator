@@ -33,13 +33,14 @@ export default function StepIndicator({ currentStep }: { currentStep: string }) 
           return (
             <div key={phase.key} className="relative z-10 flex flex-col items-center min-w-0">
               <div
-                className={`w-9 h-9 rounded-md flex items-center justify-center transition-all duration-500 ${
+                className={`w-9 h-9 flex items-center justify-center transition-all duration-500 ${
                   active
                     ? "bg-mistral-orange text-white ring-4 ring-mistral-orange/30 scale-110 shadow-lg shadow-mistral-orange/40"
                     : done
                       ? "bg-mistral-orange/80 text-white"
                       : "bg-mistral-surface text-ink-muted border border-mistral-border"
                 }`}
+                style={{ borderRadius: 0 }}
                 title={phase.sub}
               >
                 {done ? (

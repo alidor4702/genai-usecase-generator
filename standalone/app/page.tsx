@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import PixelMascot from "./components/PixelMascot";
 import UseCaseCard from "./components/UseCaseCard";
 import type { Report } from "./lib/api";
 import {
@@ -196,7 +197,7 @@ function Hero({
   progress: number;
 }) {
   const titleByPhase: Record<Phase, string> = {
-    form: "GenAI Use Case Generator",
+    form: "Compastral",
     running: `Generating use cases for ${status?.company_name ?? companyName}`,
     completed: `Report ready · ${status?.company_name ?? companyName}`,
     refused: `Couldn't proceed · ${status?.company_name ?? companyName}`,
@@ -212,15 +213,16 @@ function Hero({
 
   return (
     <header className="mb-8">
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-mistral-orange to-mistral-orangeSoft flex items-center justify-center text-xl">
-          {phase === "running" ? <span className="pulse-dot" /> : "M"}
-        </div>
-        <div className="text-xs uppercase tracking-[0.2em] text-mistral-orange font-semibold">
-          Mistral Proto · Take-Home
+      <div className="flex items-center gap-3 mb-4">
+        <PixelMascot kind="compass" size={56} />
+        <div>
+          <div className="text-xs uppercase tracking-[0.2em] text-mistral-orange font-semibold">
+            Mistral Proto · Take-Home
+          </div>
+          <div className="text-[11px] text-ink-muted mt-0.5">company × Mistral · pronounced compass</div>
         </div>
       </div>
-      <h1 className="text-3xl sm:text-4xl font-bold text-white tracking-tight">
+      <h1 className="text-3xl sm:text-5xl font-bold text-white tracking-tight">
         {titleByPhase[phase]}
       </h1>
       <p className="text-ink-secondary text-sm sm:text-base mt-2 max-w-2xl">{subtitle[phase]}</p>
@@ -492,7 +494,7 @@ function RunView({
         </div>
       </section>
 
-      {reportData && (
+      {reportData && Array.isArray(reportData.top_use_cases) && reportData.top_use_cases.length > 0 && (
         <section className="space-y-4">
           {reportData.meta_review &&
             (!reportData.meta_review.sales_engineer_ready ||
@@ -504,12 +506,12 @@ function RunView({
               Generated use cases
             </h2>
             <span className="text-xs text-ink-muted">
-              {reportData.use_cases.length} customer-ready proposals
+              {reportData.top_use_cases.length} customer-ready proposals
             </span>
           </div>
           <div className="space-y-4">
-            {reportData.use_cases.map((uc, i) => (
-              <UseCaseCard key={uc.id} uc={uc} index={i} />
+            {reportData.top_use_cases.map((uc, i) => (
+              <UseCaseCard key={uc.id ?? i} uc={uc} index={i} runId={runId ?? undefined} />
             ))}
           </div>
         </section>

@@ -1,5 +1,7 @@
 "use client";
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { EnrichedUseCase } from "../lib/api";
 import MermaidDiagram from "./MermaidDiagram";
 
@@ -19,6 +21,7 @@ import MermaidDiagram from "./MermaidDiagram";
  */
 
 type SectionKey =
+  | "description"
   | "why"
   | "example"
   | "architecture"
@@ -26,6 +29,142 @@ type SectionKey =
   | "risk"
   | "products"
   | "citations";
+
+/**
+ * Inline markdown renderer with the prose styling that matches the rest of
+ * the card. Crucially this turns `[anchor](url)` citations into clickable
+ * <a> tags — without this the model's links show up as literal `[text](url)`
+ * which is what the user complained about.
+ */
+/**
+ * Renders example_output nicely. The LLM emits it as one of:
+ *   1. A JSON object/array
+ *   2. A JSON-ish string with code-fence
+ *   3. Plain text (rare)
+ *
+ * For JSON we render a key/value table that's far easier to scan than
+ * raw `{}`. For plain text we use a softer code-block. Either way it
+ * reads as "here's what the user would see", not "here's a debug dump".
+ */
+function ExampleOutput({ raw }: { raw: string }) {
+  const cleaned = raw
+    .trim()
+    .replace(/^```(?:json)?\n?/i, "")
+    .replace(/\n?```$/, "")
+    .trim();
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    parsed = null;
+  }
+  if (parsed && typeof parsed === "object") {
+    return (
+      <div className="bg-mistral-dark/40 border border-mistral-border rounded-lg overflow-hidden">
+        <JsonView value={parsed} depth={0} />
+      </div>
+    );
+  }
+  // Fallback — non-JSON freeform. Render with monospace + soft styling.
+  return (
+    <pre className="bg-mistral-dark/40 border border-mistral-border rounded-lg p-3 text-[13px] text-slate-200 whitespace-pre-wrap break-words font-mono leading-relaxed">
+      {cleaned}
+    </pre>
+  );
+}
+
+function JsonView({ value, depth }: { value: unknown; depth: number }) {
+  if (value === null) return <span className="text-ink-muted italic">null</span>;
+  if (typeof value === "boolean")
+    return <span className="text-amber-300 font-mono">{String(value)}</span>;
+  if (typeof value === "number")
+    return <span className="text-blue-300 font-mono">{value}</span>;
+  if (typeof value === "string") {
+    // Underline-style chip if the string looks like a URL.
+    if (/^https?:\/\//.test(value)) {
+      return (
+        <a
+          href={value}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-mistral-orangeBright underline underline-offset-2 break-all"
+        >
+          {value}
+        </a>
+      );
+    }
+    return <span className="text-emerald-200 break-words">{value}</span>;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-ink-muted">[ ]</span>;
+    return (
+      <ol className={`${depth === 0 ? "p-3" : "pl-3"} space-y-1.5 list-decimal list-inside`}>
+        {value.map((v, i) => (
+          <li key={i} className="text-[13.5px]">
+            <JsonView value={v} depth={depth + 1} />
+          </li>
+        ))}
+      </ol>
+    );
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    return (
+      <dl className={`${depth === 0 ? "p-3" : ""} divide-y divide-mistral-border/50`}>
+        {entries.map(([k, v]) => (
+          <div key={k} className="grid grid-cols-[max-content_1fr] gap-3 py-1.5">
+            <dt
+              className={`text-[11px] uppercase tracking-wider font-semibold ${
+                k.startsWith("_")
+                  ? "text-amber-300/70 italic"
+                  : "text-mistral-orangeBright"
+              }`}
+            >
+              {k}
+            </dt>
+            <dd className="text-[13.5px] min-w-0">
+              <JsonView value={v} depth={depth + 1} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
+  return <span className="text-slate-300">{String(value)}</span>;
+}
+
+function ProseMd({ content }: { content: string }) {
+  return (
+    <div className="prose-card text-slate-300 leading-relaxed text-[14px]">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ children, href }) => (
+            <a
+              href={href ?? "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-mistral-orangeBright hover:text-mistral-orange underline underline-offset-2 decoration-mistral-orange/40 hover:decoration-mistral-orange transition-colors"
+            >
+              {children}
+            </a>
+          ),
+          p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
+          code: ({ children }) => (
+            <code className="px-1.5 py-0.5 rounded bg-mistral-surface border border-mistral-border text-[13px] text-mistral-orangeBright">
+              {children}
+            </code>
+          ),
+          ul: ({ children }) => <ul className="list-disc ml-5 my-2 space-y-1">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal ml-5 my-2 space-y-1">{children}</ol>,
+          strong: ({ children }) => <strong className="text-white font-semibold">{children}</strong>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 const BLUEPRINT_META: Record<
   string,
@@ -105,11 +244,14 @@ function TtvChip({ uc }: { uc: EnrichedUseCase }) {
 export default function UseCaseCard({
   uc,
   index,
+  runId,
 }: {
   uc: EnrichedUseCase;
   index: number;
+  runId?: string;
 }) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
+    description: false,
     why: index === 0,
     example: false,
     architecture: false,
@@ -119,13 +261,27 @@ export default function UseCaseCard({
     citations: false,
   });
 
+  // Defensive reads: backend versions may differ on optional fields. The
+  // crash that motivated this — `reportData.use_cases.length` going boom
+  // because the field was actually `top_use_cases` — taught us not to
+  // trust shape assumptions.
   const meta =
     BLUEPRINT_META[uc.blueprint_pattern] ?? {
-      label: uc.blueprint_pattern,
+      label: uc.blueprint_pattern || "blueprint",
       tone: "from-slate-500/20 to-slate-500/0",
       bar: "border-slate-500",
     };
-  const summary = uc.description.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ");
+  const description = uc.description || "";
+  // Plain-text summary lives WITHOUT markdown chrome — used for the 2-line
+  // teaser. Strip basic markdown link syntax so the chip-form summary
+  // doesn't show `[anchor](url)` literal in the always-visible part.
+  const plainSummary = description.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  const summary = plainSummary.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ") || plainSummary.slice(0, 280);
+  const anchoredTo = uc.time_to_value?.anchored_to ?? [];
+  const ttvBasis = uc.time_to_value?.basis;
+  const products = uc.suggested_mistral_products ?? [];
+  const inspiredBy = uc.inspired_by ?? [];
+  const groundedIn = uc.grounded_in ?? [];
 
   const Section = ({
     k,
@@ -204,26 +360,32 @@ export default function UseCaseCard({
         <p className="text-slate-200 leading-relaxed text-[15px] mb-2">{summary}</p>
 
         <div className="mt-3 -mx-1 px-1">
+          <Section k="description" title="Full description">
+            <ProseMd content={description} />
+          </Section>
           <Section k="why" title="Why this company" defaultOpen>
-            <p>{uc.why_this_company}</p>
+            <ProseMd content={uc.why_this_company || ""} />
           </Section>
           <Section k="example" title="Example interaction">
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div>
-                <span className="text-[11px] uppercase tracking-wider text-ink-muted block mb-1">
-                  Input
-                </span>
-                <code className="block bg-mistral-dark/60 border border-mistral-border rounded p-2 text-[13px] text-mistral-orangeBright">
-                  {uc.example_input}
-                </code>
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-ink-muted mb-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-mistral-orange" aria-hidden />
+                  User input
+                </div>
+                <div className="bg-mistral-dark/60 border-l-2 border-mistral-orange rounded-r p-3 text-[14px] text-white italic">
+                  "{uc.example_input}"
+                </div>
               </div>
               <div>
-                <span className="text-[11px] uppercase tracking-wider text-ink-muted block mb-1">
-                  Output (illustrative)
-                </span>
-                <pre className="bg-mistral-dark/60 border border-mistral-border rounded p-2 text-[12.5px] text-slate-200 whitespace-pre-wrap break-words font-mono">
-                  {uc.example_output}
-                </pre>
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-ink-muted mb-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" aria-hidden />
+                  System output
+                  <span className="ml-1 text-[10px] text-amber-300/80 normal-case tracking-normal italic">
+                    illustrative
+                  </span>
+                </div>
+                <ExampleOutput raw={uc.example_output ?? ""} />
               </div>
             </div>
           </Section>
@@ -232,30 +394,32 @@ export default function UseCaseCard({
           </Section>
           <Section k="ttv" title="Time-to-value">
             <p>
-              <span className="font-semibold text-white">{uc.time_to_value.estimate}</span>
-              {uc.time_to_value.basis === "ballpark_assumption" && (
+              <span className="font-semibold text-white">
+                {uc.time_to_value?.estimate || "unknown"}
+              </span>
+              {ttvBasis === "ballpark_assumption" && (
                 <span className="ml-2 text-amber-300 text-xs uppercase tracking-wider font-bold">
                   Estimated (no precedent)
                 </span>
               )}
-              {uc.time_to_value.basis === "precedent" && uc.time_to_value.anchored_to.length > 0 && (
+              {ttvBasis === "precedent" && anchoredTo.length > 0 && (
                 <span className="ml-2 text-blue-300 text-xs uppercase tracking-wider font-bold">
                   Precedent-anchored
                 </span>
               )}
             </p>
-            {uc.time_to_value.rationale && (
+            {uc.time_to_value?.rationale && (
               <p className="mt-1.5 text-ink-secondary italic text-sm">
                 {uc.time_to_value.rationale}
               </p>
             )}
           </Section>
           <Section k="risk" title="Top implementation risk">
-            <p>{uc.top_implementation_risk}</p>
+            <ProseMd content={uc.top_implementation_risk || ""} />
           </Section>
           <Section k="products" title="Mistral products">
             <ul className="flex flex-wrap gap-1.5">
-              {uc.suggested_mistral_products.map((p) => (
+              {products.map((p) => (
                 <li
                   key={p}
                   className="px-2.5 py-1 rounded bg-mistral-orange/10 border border-mistral-orange/30 text-[13px] text-mistral-orangeBright"
@@ -265,32 +429,75 @@ export default function UseCaseCard({
               ))}
             </ul>
           </Section>
-          {(uc.inspired_by.length > 0 || uc.grounded_in.length > 0) && (
+          {(inspiredBy.length > 0 || groundedIn.length > 0 || (uc.evidence_ids ?? []).length > 0) && (
             <Section k="citations" title="Grounding">
-              {uc.inspired_by.length > 0 && (
+              {runId && (
+                <p className="mb-3 text-[12px] text-ink-secondary">
+                  Click any citation to see the source content in the{" "}
+                  <a
+                    href={`/grounding/${runId}`}
+                    className="text-mistral-orangeBright hover:text-mistral-orange underline underline-offset-2"
+                  >
+                    grounding database ↗
+                  </a>
+                  .
+                </p>
+              )}
+              {inspiredBy.length > 0 && (
                 <div className="mb-2">
                   <span className="text-[11px] uppercase tracking-wider text-ink-muted block mb-1">
                     Inspired by precedents
                   </span>
                   <div className="flex flex-wrap gap-1.5">
-                    {uc.inspired_by.map((id) => (
-                      <code
-                        key={id}
-                        className="px-2 py-0.5 bg-mistral-dark/60 border border-mistral-border rounded text-[12px] text-slate-300"
-                      >
-                        {id}
-                      </code>
-                    ))}
+                    {inspiredBy.map((id) =>
+                      runId ? (
+                        <a
+                          key={id}
+                          href={`/grounding/${runId}#${encodeURIComponent(id)}`}
+                          className="px-2 py-0.5 bg-mistral-dark/60 border border-mistral-border rounded text-[12px] text-slate-300 font-mono hover:border-mistral-orange hover:text-mistral-orangeBright transition-colors"
+                        >
+                          {id}
+                        </a>
+                      ) : (
+                        <code key={id} className="px-2 py-0.5 bg-mistral-dark/60 border border-mistral-border rounded text-[12px] text-slate-300">
+                          {id}
+                        </code>
+                      )
+                    )}
                   </div>
                 </div>
               )}
-              {uc.grounded_in.length > 0 && (
+              {(uc.evidence_ids ?? []).length > 0 && (
+                <div className="mb-2">
+                  <span className="text-[11px] uppercase tracking-wider text-ink-muted block mb-1">
+                    Web evidence
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(uc.evidence_ids ?? []).map((id) =>
+                      runId ? (
+                        <a
+                          key={id}
+                          href={`/grounding/${runId}#${encodeURIComponent(id)}`}
+                          className="px-2 py-0.5 bg-mistral-orange/10 border border-mistral-orange/30 rounded text-[12px] text-mistral-orangeBright font-mono hover:bg-mistral-orange/20 transition-colors"
+                        >
+                          {id}
+                        </a>
+                      ) : (
+                        <code key={id} className="px-2 py-0.5 bg-mistral-dark/60 border border-mistral-border rounded text-[12px] text-slate-300">
+                          {id}
+                        </code>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+              {groundedIn.length > 0 && (
                 <div>
                   <span className="text-[11px] uppercase tracking-wider text-ink-muted block mb-1">
                     Grounded in CompanyContext fields
                   </span>
                   <div className="flex flex-wrap gap-1.5">
-                    {uc.grounded_in.map((g) => (
+                    {groundedIn.map((g) => (
                       <code
                         key={g}
                         className="px-2 py-0.5 bg-mistral-dark/60 border border-mistral-border rounded text-[12px] text-slate-300"

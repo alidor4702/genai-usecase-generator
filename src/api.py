@@ -108,6 +108,11 @@ class RunState:
         self.trace: RunTrace | None = None
         self.report: Report | None = None
         self.report_markdown: str | None = None
+        # Append-only evidence ledger captured for the /grounding/<run_id>
+        # endpoint. Same object the pipeline mutated; we hold a reference
+        # after execute_pipeline returns so the FE can render every cited
+        # source with title + URL + content excerpt.
+        self.ledger: object | None = None
         self.error: str | None = None
         self.refusal_reason: str | None = None
 
@@ -201,6 +206,56 @@ async def report(run_id: str) -> ReportResponse:
         report=state.report,
         markdown=state.report_markdown,
     )
+
+
+@app.get("/grounding/{run_id}")
+async def grounding(run_id: str) -> dict[str, object]:
+    """Return the run's full evidence ledger so the FE can render an
+    explorable grounding-data view. Each entry is the same EvidenceItem
+    the pipeline cited from — id, source_kind, url, title, content,
+    fetched_at_step.
+
+    The FE links a use case's `evidence_ids` / `inspired_by` references
+    here so reviewers can click a citation and see exactly what content
+    the system grounded a claim in.
+    """
+    state = _runs.get(run_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+    ledger = state.ledger
+    entries: list[dict[str, object]] = []
+    if ledger is not None and hasattr(ledger, "entries"):
+        for ent in ledger.entries:  # type: ignore[attr-defined]
+            entries.append(
+                {
+                    "id": ent.id,
+                    "source_kind": ent.source_kind.value if hasattr(ent.source_kind, "value") else str(ent.source_kind),
+                    "url": ent.url,
+                    "title": ent.title,
+                    "content": ent.content,
+                    "fetched_at_step": ent.fetched_at_step,
+                    "confidence": getattr(ent, "confidence", None),
+                }
+            )
+    # Per-use-case index: list which evidence_ids each use case cited so
+    # the FE can group entries under the use case that referenced them.
+    by_use_case: list[dict[str, object]] = []
+    if state.report is not None:
+        for uc in state.report.top_use_cases:
+            by_use_case.append(
+                {
+                    "id": uc.id,
+                    "title": uc.title,
+                    "evidence_ids": list(uc.evidence_ids),
+                    "inspired_by": list(uc.inspired_by),
+                }
+            )
+    return {
+        "run_id": run_id,
+        "company_name": state.params.company_name,
+        "entries": entries,
+        "by_use_case": by_use_case,
+    }
 
 
 @app.get("/events/{run_id}")
@@ -331,6 +386,7 @@ async def _execute_run(run_id: str) -> None:
         result = await execute_pipeline(state.params)
         # result.trace is the same object we created above (start_run_trace
         # reused it via the contextvar), so events are already on state.trace.
+        state.ledger = result.ledger
         if result.refused:
             state.status = "refused"
             state.refusal_reason = result.refusal_reason

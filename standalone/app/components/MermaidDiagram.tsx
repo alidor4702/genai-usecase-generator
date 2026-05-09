@@ -47,6 +47,23 @@ function loadMermaid(theme: "dark" | "light") {
 }
 
 /**
+ * Strip ```mermaid / ``` fences if the body is wrapped in them.
+ * The backend sometimes returns the raw mermaid string with the
+ * markdown fence still attached; mermaid's parser then fails with
+ * "UnknownDiagramError: No diagram type detected".
+ */
+function stripMermaidFences(s: string): string {
+  let body = (s || "").trim();
+  // Leading fence
+  if (body.startsWith("```mermaid")) body = body.slice("```mermaid".length).trimStart();
+  else if (body.startsWith("```Mermaid")) body = body.slice("```Mermaid".length).trimStart();
+  else if (body.startsWith("```")) body = body.slice(3).trimStart();
+  // Trailing fence
+  if (body.endsWith("```")) body = body.slice(0, -3).trimEnd();
+  return body;
+}
+
+/**
  * Heuristically classify each node by its label, then emit classDef +
  * class lines so Mermaid renders LLM nodes / data stores / users
  * differently. This is on top of the per-pattern color the backend
@@ -105,7 +122,13 @@ export default function MermaidDiagram({ source, id }: { source: string; id: str
       document.documentElement.getAttribute("data-theme") === "light"
         ? "light"
         : "dark";
-    const decorated = decorateWithNodeTypes(source);
+    // Strip ```mermaid / ``` fences if the source is wrapped in them.
+    // The backend's `uc.blueprint_mermaid` field often comes from the LLM
+    // including fences; rendering them as part of the diagram source breaks
+    // mermaid's parser ("UnknownDiagramError"). Defensive strip here so any
+    // caller that hands us raw markdown body still works.
+    const stripped = stripMermaidFences(source);
+    const decorated = decorateWithNodeTypes(stripped);
     loadMermaid(theme)
       .then((mermaid) => mermaid.render(`mermaid-${id}-${theme}`, decorated))
       .then(({ svg }) => {
