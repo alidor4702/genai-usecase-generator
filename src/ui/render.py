@@ -36,36 +36,77 @@ from src.models import (
 logger = logging.getLogger(__name__)
 
 
-_LONG_NODE_LABEL_RX = re.compile(
-    r'(\[(?:[("/\\]?)\s*(?:"([^"]+)"|([^\]"\n]{31,}?))\s*([)"/\\]?)\])',
+# Match a node-definition: an alphanumeric identifier followed by
+# `[...]` (the rectangle shape — by far the most common one the LLM
+# emits). Inner content can include any character EXCEPT square
+# brackets and newlines. Anchored on the identifier so arrows like
+# `-->` aren't matched.
+#
+# Group 1: the node ID (e.g. "A", "Foo123")
+# Group 2: the inner label content
+#
+# Other mermaid shapes (`((...))`, `[(...)]`, `{...}`, etc.) are left
+# as-is. The LLM rarely uses them in generated blueprints, and when
+# it does the content is usually simple. Adding generic handling for
+# all shapes added more parser ambiguity than it solved.
+_NODE_LABEL_RX = re.compile(
+    r'\b([A-Za-z_][A-Za-z0-9_]*)\[([^\[\]\n]*)\]'
 )
 
+# Characters that confuse mermaid's parser when they appear inside an
+# UNQUOTED node label. Quoting the label fixes them all.
+_MERMAID_UNSAFE_LABEL_CHARS = set("()[]{}|<>'\"")
 
-def _truncate_long_mermaid_labels(s: str) -> str:
-    """Safety net: cap any node label longer than 30 chars at 30 chars
-    plus an ellipsis. The generation prompt instructs the model to keep
-    labels short, but the LLM occasionally produces labels like
-    `User: Hand Gestures / Eye-tracking input capture` that overflow
-    the box in Le Chat / canvas renders. This regex finds bracketed
-    node labels (square brackets with optional shape modifiers like
-    `[(`, `["`, `[/`) and shortens the label content.
+
+def _sanitize_mermaid_labels(s: str) -> str:
+    """Two-in-one safety net for LLM-generated mermaid blocks.
+
+    1. Quote-wrap any label whose inner content contains characters
+       that confuse mermaid's parser (parens, brackets, slashes,
+       angle brackets) when used unquoted. The classic break is
+       `E[Agent: Validator (Iridius)]` — the `(` is read as a shape
+       modifier and the diagram fails to render. Wrapping in quotes
+       (`E["Agent: Validator (Iridius)"]`) makes mermaid treat the
+       whole content as text.
+
+    2. Truncate any label longer than 30 chars to 27 chars + ellipsis,
+       so labels stay inside their boxes in Le Chat / canvas renders.
+
+    The generation prompt also instructs the LLM to keep labels short
+    and avoid parens — this is the safety net that catches the
+    occasional non-compliant output.
     """
-    def _shrink(match: re.Match[str]) -> str:
-        # Reconstruct: keep the bracket shape, shorten only the label.
-        full = match.group(0)
-        # Quoted variant: [(...)], ["..."]
-        quoted = match.group(2)
-        bare = match.group(3)
-        label = quoted if quoted is not None else bare
-        if not label or len(label) <= 30:
-            return full
-        short = label[:27].rstrip() + "…"
-        # Re-wrap exactly as it was found.
-        if quoted is not None:
-            return full.replace(f'"{label}"', f'"{short}"', 1)
-        return full.replace(label, short, 1)
+    def _process(match: re.Match[str]) -> str:
+        node_id = match.group(1)
+        inner = match.group(2)
+        if not inner:
+            return match.group(0)
 
-    return _LONG_NODE_LABEL_RX.sub(_shrink, s)
+        # Already quoted — only need to truncate.
+        is_quoted = inner.strip().startswith('"') and inner.strip().endswith('"')
+        if is_quoted:
+            unquoted = inner.strip()[1:-1]
+            if len(unquoted) > 30:
+                unquoted = unquoted[:27].rstrip() + "…"
+            return f'{node_id}["{unquoted}"]'
+
+        # Bare label — check for unsafe chars.
+        unsafe = any(c in _MERMAID_UNSAFE_LABEL_CHARS for c in inner)
+        clean = inner
+        if len(clean) > 30:
+            clean = clean[:27].rstrip() + "…"
+        if unsafe:
+            # Wrap in quotes; replace any internal double-quotes with
+            # single quotes to avoid breaking the wrap.
+            clean_quoted = clean.replace('"', "'")
+            return f'{node_id}["{clean_quoted}"]'
+        return f'{node_id}[{clean}]'
+
+    return _NODE_LABEL_RX.sub(_process, s)
+
+
+# Backward-compat alias
+_truncate_long_mermaid_labels = _sanitize_mermaid_labels
 
 
 def _clean_mermaid(s: str) -> str:

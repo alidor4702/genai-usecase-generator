@@ -501,134 +501,117 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         except Exception as e:  # noqa: BLE001
             logger.exception("workflow: send_assistant_message FAILED — %s", e)
 
-        # ── Canvas editing for human-in-the-loop refinement ─────────
-        # After the report renders, ship a small editable canvas
-        # that invites the user to flag changes. The CanvasInput
-        # primitive lets the user edit the canvas directly in Le Chat
-        # and submit; we receive the edited content back. Wait up to
-        # 90 seconds — if the user ignores the affordance, the
-        # workflow finishes without the feedback loop.
-        feedback_uri = f"file://canvas/feedback-{company_name.lower().replace(' ', '-').replace(',', '')}"
-        feedback_canvas = workflows_mistralai.CanvasResource(
-            uri=feedback_uri,
-            canvas=workflows_mistralai.CanvasPayload(
-                type="text/markdown",
-                title=f"Refine the report — {company_name}",
-                content=(
-                    f"# Want to refine any of the use cases?\n\n"
-                    f"Edit this canvas with what you'd like changed, then submit. "
-                    f"Examples:\n\n"
-                    f"- _Replace use case 2 with one focused on retail-specific data privacy._\n"
-                    f"- _Tighten the example output of use case 1 — too much illustrative data._\n"
-                    f"- _The Concordis claim in use case 3 wasn't supported — drop the use case._\n\n"
-                    f"Submit when ready, or wait 90 seconds to skip and finish.\n\n"
-                    f"---\n\n"
-                    f"_({company_name} report ready · {len(output_chunks)} chunks shipped above)_"
-                ),
-            ),
-        )
-        try:
-            await workflows_mistralai.send_assistant_message(
-                "Want to refine any of the use cases? Edit the canvas below.",
-                canvas=feedback_canvas,
+        # ── Refinement form (FormInput, not CanvasInput) ────────────
+        # After the report renders, prompt the user with a structured
+        # form: a SingleChoice dropdown (which use case to refine, or
+        # finish) + a TextField for instructions. Renders as a proper
+        # form in Le Chat — clearer affordance than asking them to
+        # edit a canvas. Wait up to 120 seconds; if they ignore, the
+        # workflow finishes cleanly.
+        use_case_chunks = (chunks or {}).get("use_cases") or []
+        if isinstance(use_case_chunks, list) and len(use_case_chunks) >= 3:
+            uc_titles = [
+                str(uc.get("title", f"Use case {i + 1}")) if isinstance(uc, dict)
+                else f"Use case {i + 1}"
+                for i, uc in enumerate(use_case_chunks)
+            ]
+            # Build a per-run FormInput class. Using lru_cache-style
+            # local construction keeps the Pydantic class fresh per
+            # invocation (different SingleChoice options per company).
+            from mistralai.workflows.conversational import (
+                FormInput as _FormInput,
+                SingleChoice as _SingleChoice,
+                TextField as _TextField,
             )
-        except Exception as e:  # noqa: BLE001
-            logger.exception("workflow: feedback canvas push FAILED — %s", e)
 
-        feedback_text: str | None = None
-        try:
-            feedback = await self.wait_for_input(
-                workflows_mistralai.CanvasInput(
-                    canvas_uri=feedback_uri,
-                    prompt="What would you like to refine? (or leave blank and submit to skip)",
-                ),
-                timeout=90.0,
-            )
-            edited_canvas = getattr(feedback, "canvas", None)
-            edited_content = (
-                str(getattr(edited_canvas, "content", "")) if edited_canvas else ""
-            )
-            chat_input = getattr(feedback, "chatInput", None)
-            chat_msg = str(getattr(chat_input, "message", "")) if chat_input else ""
-            feedback_text = (
-                f"chat: {chat_msg!r}, canvas-edited: {len(edited_content)} chars"
-            )
-            logger.info("workflow: canvas feedback received — %s", feedback_text)
-
-            # Identify which use case the user wants refined. We parse
-            # both the chat message and the edited canvas for ordinal
-            # / numeric clues ("use case 2", "the second one", etc.).
-            # If we can't pin one down, pick use case 1 as the safest
-            # default to demonstrate the loop.
-            use_case_chunks = (chunks or {}).get("use_cases") or []
-            target_idx = parse_use_case_index(
-                chat_msg, edited_content, len(use_case_chunks) or 3
-            )
-            if target_idx is None:
-                target_idx = 0  # default to first use case
-
-            target_uc = (
-                use_case_chunks[target_idx]
-                if isinstance(use_case_chunks, list) and 0 <= target_idx < len(use_case_chunks)
-                else None
-            )
-            if target_uc is None or not isinstance(target_uc, dict):
-                # Nothing to refine — acknowledge politely and exit.
-                await workflows_mistralai.send_assistant_message(
-                    f"Got your feedback for **{company_name}** but couldn't find a "
-                    f"matching use case to refine. Try mentioning the use case number "
-                    f"(e.g. \"use case 2 should focus more on ...\") next time."
+            class RefineFeedbackForm(_FormInput):
+                target: str = _SingleChoice(
+                    options=[
+                        ("uc1", f"Refine use case 1 — {uc_titles[0][:60]}"),
+                        ("uc2", f"Refine use case 2 — {uc_titles[1][:60]}"),
+                        ("uc3", f"Refine use case 3 — {uc_titles[2][:60]}"),
+                        ("done", "All good — finish"),
+                    ],
+                    description="Which use case would you like to refine?",
+                    prefilled_value="done",
                 )
-            else:
-                target_title = str(target_uc.get("title", f"Use case {target_idx + 1}"))
-                target_body = str(target_uc.get("body_md", ""))
-                logger.info(
-                    "workflow: refining use case %d (%r) per user feedback",
-                    target_idx + 1,
-                    target_title,
-                )
-                await workflows_mistralai.send_assistant_message(
-                    f"Got your feedback — refining **use case {target_idx + 1}: "
-                    f"{target_title}**. One moment…"
-                )
-
-                # Run the refinement activity (single LLM call, ≤90s).
-                refined_md = await refine_use_case_activity(
-                    target_body,
-                    edited_content,
-                    chat_msg,
-                    company_name,
-                )
-
-                # Ship the refined version as a new markdown canvas.
-                refined_canvas = workflows_mistralai.CanvasResource(
-                    canvas=workflows_mistralai.CanvasPayload(
-                        type="text/markdown",
-                        title=f"Refined · use case {target_idx + 1} — {target_title}",
-                        content=refined_md,
+                instructions: str = _TextField(
+                    description=(
+                        "What should we change? "
+                        "Example: 'tighten the example output' or "
+                        "'use a different blueprint pattern' or "
+                        "'the Concordis claim isn't supported, replace it'."
                     ),
+                    prefilled_value="",
                 )
-                await workflows_mistralai.send_assistant_message(
-                    [
-                        workflows_mistralai.TextOutput(
-                            text=(
-                                f"Here's a refined version of use case "
-                                f"{target_idx + 1} — incorporating your feedback. "
-                                f"Open the canvas below."
-                            )
-                        ),
-                        workflows_mistralai.ResourceOutput(resource=refined_canvas),
-                    ]
+
+            try:
+                form_result = await self.wait_for_input(
+                    RefineFeedbackForm,
+                    timeout=120.0,
                 )
-        except asyncio.TimeoutError:
-            logger.info("workflow: canvas feedback timeout (90s) — no edits provided, finishing")
-        except Exception as e:  # noqa: BLE001
-            # CanvasInput unsupported on this runtime / surface — log
-            # and continue. The report still renders; only the
-            # human-in-the-loop affordance is missing.
-            logger.info(
-                "workflow: canvas feedback skipped (%s) — finishing without refinement loop",
-                type(e).__name__,
-            )
+                target_choice = str(getattr(form_result, "target", "done"))
+                instructions = str(getattr(form_result, "instructions", "")).strip()
+                logger.info(
+                    "workflow: refine form — target=%s, instructions=%r",
+                    target_choice,
+                    instructions[:80],
+                )
+
+                if target_choice == "done":
+                    # User said all good — just acknowledge.
+                    await workflows_mistralai.send_assistant_message(
+                        f"Great — finishing the run for **{company_name}**. "
+                        f"The report is locked in."
+                    )
+                else:
+                    target_idx = {"uc1": 0, "uc2": 1, "uc3": 2}.get(target_choice, 0)
+                    target_uc = (
+                        use_case_chunks[target_idx]
+                        if 0 <= target_idx < len(use_case_chunks)
+                        else None
+                    )
+                    if target_uc and isinstance(target_uc, dict):
+                        target_title = str(target_uc.get("title", f"Use case {target_idx + 1}"))
+                        target_body = str(target_uc.get("body_md", ""))
+                        await workflows_mistralai.send_assistant_message(
+                            f"Refining **use case {target_idx + 1}: {target_title}** "
+                            f"per your instructions. One moment…"
+                        )
+                        refined_md = await refine_use_case_activity(
+                            target_body,
+                            "",  # no canvas content — instructions come via form
+                            instructions,
+                            company_name,
+                        )
+                        refined_canvas = workflows_mistralai.CanvasResource(
+                            canvas=workflows_mistralai.CanvasPayload(
+                                type="text/markdown",
+                                title=f"Refined · use case {target_idx + 1} — {target_title}",
+                                content=refined_md,
+                            ),
+                        )
+                        await workflows_mistralai.send_assistant_message(
+                            [
+                                workflows_mistralai.TextOutput(
+                                    text=(
+                                        f"Here's a refined version of use case "
+                                        f"{target_idx + 1} — incorporating your feedback. "
+                                        f"Open the canvas below."
+                                    )
+                                ),
+                                workflows_mistralai.ResourceOutput(resource=refined_canvas),
+                            ]
+                        )
+            except asyncio.TimeoutError:
+                logger.info("workflow: refine form timeout (120s) — no input, finishing")
+            except Exception as e:  # noqa: BLE001
+                # FormInput unsupported on this runtime / surface — log
+                # and continue. The report still renders; only the
+                # refinement loop is missing.
+                logger.info(
+                    "workflow: refine form skipped (%s) — finishing without refinement loop",
+                    type(e).__name__,
+                )
 
         return workflows_mistralai.ChatAssistantWorkflowOutput(content=output_chunks)
