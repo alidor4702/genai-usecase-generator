@@ -272,7 +272,14 @@ function FormView({
     }
   };
   return (
-    <section className="relative glass rounded-3xl p-6 sm:p-10 space-y-7 slide-in overflow-hidden">
+    <div className="relative">
+      {/* Mistral cat-M crest — only shows for "Mistral" / "Mistral AI",
+          positioned ABOVE the panel so it reads like a brand mark
+          emerging from it. Lives in this relative wrapper (not inside
+          the panel) because the panel uses overflow-hidden for its
+          gradient bloom and would clip the glyph otherwise. */}
+      <CompanyGlyph name={companyName} />
+      <section className="relative glass rounded-3xl p-6 sm:p-10 space-y-7 slide-in overflow-hidden">
       <div
         className="pointer-events-none absolute inset-0 opacity-40"
         style={{
@@ -298,10 +305,6 @@ function FormView({
             <kbd className="absolute right-4 top-1/2 -translate-y-1/2 text-[11px] text-ink-muted font-mono px-2 py-0.5 bg-mistral-surface rounded border border-mistral-border">
               ↵
             </kbd>
-            {/* Brand glyph appears when the user types a recognised
-                company name. Currently only Mistral (cat-ear M) but
-                trivial to extend to other recognisable brands. */}
-            <CompanyGlyph name={companyName} />
           </div>
         </label>
         <div className="mt-3 flex flex-wrap gap-2">
@@ -428,7 +431,8 @@ function FormView({
           <span className="ml-2 inline-block group-hover:translate-x-0.5 transition-transform">→</span>
         </button>
       </div>
-    </section>
+      </section>
+    </div>
   );
 }
 

@@ -1,29 +1,26 @@
 "use client";
 
 /**
- * CompanyGlyph — show a brand mark when the user types a recognised
- * company name in the Pick-a-company input. Currently covers Mistral AI
- * (the cat-ear M); the dispatch table is trivial to extend.
- *
- * The Mistral mark is laid out on a 16×16 pixel grid with the small
- * "ears" on top so it reads as cat-shaped — same brand vibe as the
- * site mascot pixel art.
+ * CompanyGlyph — only fires for Mistral AI. Renders the cat-ear M
+ * pixel-art mark above the input panel as a "watermark crest" so the
+ * panel reads like the brand surface itself when the recognised name
+ * is typed. Other companies don't get a glyph: the v9.x guidance is
+ * that brand-marking should be a soft Easter-egg for the home brand,
+ * not a per-customer logo lookup.
  */
 
 import { useMemo } from "react";
 
-type Glyph = (size: number) => React.ReactElement | null;
-
 function MistralCatM({ size }: { size: number }) {
   return (
     <span
-      className="inline-flex items-center justify-center bg-gradient-to-br from-mistral-orange to-mistral-orangeBright shadow-lg shadow-mistral-orange/30"
-      style={{ width: size, height: size, borderRadius: 6 }}
+      className="inline-flex items-center justify-center bg-gradient-to-br from-mistral-orange to-mistral-orangeBright shadow-xl shadow-mistral-orange/40 ring-2 ring-mistral-orange/20"
+      style={{ width: size, height: size, borderRadius: 10 }}
       aria-hidden
     >
       <svg
-        width={size - 8}
-        height={size - 8}
+        width={size - 12}
+        height={size - 12}
         viewBox="0 0 16 16"
         shapeRendering="crispEdges"
         preserveAspectRatio="xMidYMid meet"
@@ -53,78 +50,29 @@ function MistralCatM({ size }: { size: number }) {
   );
 }
 
-function carrefourLogo({ size }: { size: number }) {
-  // Two opposing chevrons in red + blue — Carrefour's iconic mark, simplified.
-  return (
-    <span
-      className="inline-flex items-center justify-center bg-white shadow-lg"
-      style={{ width: size, height: size, borderRadius: 6 }}
-      aria-hidden
-    >
-      <svg width={size - 8} height={size - 8} viewBox="0 0 16 16" shapeRendering="geometricPrecision">
-        <polygon points="1,2 8,8 1,14" fill="#0042a5" />
-        <polygon points="15,2 8,8 15,14" fill="#e30613" />
-      </svg>
-    </span>
-  );
-}
+const MISTRAL_RX = /^\s*mistral(\s*ai)?\s*$/i;
 
-function loralL({ size }: { size: number }) {
-  return (
-    <span
-      className="inline-flex items-center justify-center bg-black shadow-lg"
-      style={{ width: size, height: size, borderRadius: 6 }}
-      aria-hidden
-    >
-      <span className="text-white font-bold tracking-wider text-[11px]">L'OREAL</span>
-    </span>
-  );
-}
-
-function veoliaV({ size }: { size: number }) {
-  return (
-    <span
-      className="inline-flex items-center justify-center bg-[#fa3c3c] shadow-lg"
-      style={{ width: size, height: size, borderRadius: 6 }}
-      aria-hidden
-    >
-      <span className="text-white font-bold text-lg">V</span>
-    </span>
-  );
-}
-
-function bnpStar({ size }: { size: number }) {
-  return (
-    <span
-      className="inline-flex items-center justify-center bg-[#009639] shadow-lg"
-      style={{ width: size, height: size, borderRadius: 6 }}
-      aria-hidden
-    >
-      <span className="text-white font-bold text-[11px]">BNP</span>
-    </span>
-  );
-}
-
-const GLYPHS: { match: RegExp; render: ({ size }: { size: number }) => React.ReactElement }[] = [
-  { match: /^\s*mistral(\s*ai)?\s*$/i, render: MistralCatM },
-  { match: /^\s*carrefour\b/i, render: carrefourLogo },
-  { match: /^\s*l['']?\s*or[ée]al\b/i, render: loralL },
-  { match: /^\s*veolia\b/i, render: veoliaV },
-  { match: /^\s*bnp(\s+paribas)?\b/i, render: bnpStar },
-];
-
-export default function CompanyGlyph({ name, size = 56 }: { name: string; size?: number }) {
-  const Glyph = useMemo(() => {
-    for (const g of GLYPHS) if (g.match.test(name)) return g.render;
-    return null;
-  }, [name]);
-  if (!Glyph) return null;
+/**
+ * Renders the Mistral cat-M crest centered ABOVE the input panel.
+ * Use as a sibling that sits half-overlapping the panel via negative
+ * margin: the parent should style it like a brand mark "emerging from"
+ * the panel.
+ *
+ * Layout pattern in the parent:
+ *   <div className="relative">
+ *     <CompanyGlyph name={companyName} />   {/* absolutely positioned to top *\/}
+ *     <div className="panel">…</div>
+ *   </div>
+ */
+export default function CompanyGlyph({ name, size = 64 }: { name: string; size?: number }) {
+  const matches = useMemo(() => MISTRAL_RX.test(name), [name]);
+  if (!matches) return null;
   return (
     <div
-      className="shrink-0 transition-all duration-300 animate-[slideIn_0.3s_cubic-bezier(0.16,1,0.3,1)]"
-      title={`Detected: ${name.trim()}`}
+      className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 z-10 transition-all duration-300 animate-[slideIn_0.3s_cubic-bezier(0.16,1,0.3,1)]"
+      title="Mistral AI — home turf"
     >
-      <Glyph size={size} />
+      <MistralCatM size={size} />
     </div>
   );
 }

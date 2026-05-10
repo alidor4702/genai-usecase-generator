@@ -12,28 +12,43 @@ import SiteNav from "../components/SiteNav";
  * verification chain. No marketing copy.
  */
 
-// Pipeline rendered LR (left-to-right) so it uses the page width
-// instead of a tall vertical column. Each phase wraps to multiple
-// lines via <br/> so the boxes stay narrow but readable.
+// Pipeline rendered as 5 horizontal phase-bands stacked top-to-bottom.
+// Each subgraph flows LR internally (so steps in a phase read left to
+// right) and the bands stack vertically — fills the panel as a 2D
+// grid instead of a single long horizontal strip. The earlier `LR`
+// version put 14 boxes in one row which was unreadable.
 const PIPELINE_MERMAID = `
-flowchart LR
-  Input([Company name + knobs])
-  Research["1. Research<br/>Mistral Medium 3.5"]
-  GapFill["1b. Gap-fill<br/>Tavily"]
-  Retrieve["2. Retrieve<br/>cosine top-k"]
-  Generate["3. Generate 12<br/>Mistral Medium 3.5<br/>+ web_search"]
-  Score["4. Score 5 criteria<br/>Mistral Small × 2"]
-  Verify["5. Verify top-3<br/>Tavily + Small"]
-  Enrich["6. Enrich top-3<br/>Mistral Large 3"]
-  Polish["6a. Polish<br/>full-pool"]
-  MetaEval["7. Meta-eval<br/>per-claim<br/>Mistral Medium 3.5"]
-  WebVerify["7c. Web-verify<br/>2-tier rescue"]
-  Judge["7d. Judge<br/>self-correcting<br/>Mistral Small"]
-  FinalQ["7e. Final qualify<br/>Mistral Small"]
-  Signals["Quality signals"]
-  Output([Report + persistence])
+flowchart TB
+  subgraph p1 ["Phase 1 — Research & retrieve"]
+    direction LR
+    Input(["Company + knobs"]) --> Research["1. Research<br/>Mistral Medium 3.5"]
+    Research --> GapFill["1b. Gap-fill<br/>Tavily"]
+    GapFill --> Retrieve["2. Retrieve<br/>cosine top-k"]
+  end
+  subgraph p2 ["Phase 2 — Candidate generation"]
+    direction LR
+    Generate["3. Generate 12<br/>Mistral Medium 3.5<br/>+ web_search"] --> Score["4. Score · 5 criteria<br/>Mistral Small × 2"]
+    Score --> Verify["5. Verify top-3<br/>Tavily + Small"]
+  end
+  subgraph p3 ["Phase 3 — Enrich top-3"]
+    direction LR
+    Enrich["6. Enrich<br/>Mistral Large 3"] --> Polish["6a. Polish<br/>full-pool"]
+    Polish --> MetaEval["7. Meta-eval<br/>per-claim<br/>Mistral Medium 3.5"]
+  end
+  subgraph p4 ["Phase 4 — Verification chain"]
+    direction LR
+    WebVerify["7c. Web-verify<br/>2-tier rescue"] --> Judge["7d. Judge<br/>self-correcting<br/>Mistral Small"]
+    Judge --> FinalQ["7e. Final qualify<br/>Mistral Small"]
+  end
+  subgraph p5 ["Phase 5 — Output"]
+    direction LR
+    Signals["Quality signals"] --> Output(["Report + persist"])
+  end
 
-  Input --> Research --> GapFill --> Retrieve --> Generate --> Score --> Verify --> Enrich --> Polish --> MetaEval --> WebVerify --> Judge --> FinalQ --> Signals --> Output
+  Retrieve --> Generate
+  Verify --> Enrich
+  MetaEval --> WebVerify
+  FinalQ --> Signals
 
   classDef llm fill:#fa552e,stroke:#fdba8c,color:#fff,stroke-width:2px
   classDef live fill:#1e3a8a,stroke:#60a5fa,color:#dbeafe,stroke-width:2px
@@ -86,8 +101,8 @@ flowchart TD
   Fail --> FQ[7e. Final qualify<br/>surgical rewrite]
   FailJ --> FQ
   FQ --> Final
-  Final --> DB[(SQLite runs table)]
-  DB --> History[/history page replay]
+  Final --> DB[("SQLite runs table")]
+  DB --> History["History page replay"]
 
   classDef ok fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1.5px
   classDef fail fill:#7c2d12,stroke:#fa552e,color:#fed7aa,stroke-width:1.5px
