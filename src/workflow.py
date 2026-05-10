@@ -67,7 +67,6 @@ with _temporal_workflow.unsafe.imports_passed_through():
 from src.models import (
     CriteriaWeights,
     FocusArea,
-    WorkflowEntryInput,
     WorkflowInput,
     WorkflowStatus,
 )
@@ -173,17 +172,20 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         )
 
     @workflows.workflow.entrypoint
-    async def run(self, entry: WorkflowEntryInput) -> workflows_mistralai.ChatAssistantWorkflowOutput:
-        # The entrypoint takes `WorkflowEntryInput` — a slim 2-field
-        # schema (company + focus) so Le Chat's auto-form is clean.
-        # Internally we expand to the full `WorkflowInput` with server
-        # defaults for weights + research_depth. Power users who want
-        # to tune those go through the standalone web app, which
-        # builds `WorkflowInput` directly.
-        params = WorkflowInput.from_entry(entry)
+    async def run(self, params: WorkflowInput) -> workflows_mistralai.ChatAssistantWorkflowOutput:
         self.company_name = params.company_name
 
-        # No second clarification prompt — the slim entry form already
+        # Apply the per-run tier override. Activities downstream read
+        # `settings.tier` so we mutate the singleton at the start of
+        # the run. Concurrent runs with different tiers will race on
+        # this global; that's acceptable for the take-home's
+        # single-user usage and would migrate to a context-var in
+        # production.
+        if params.tier != settings.tier:
+            logger.info("workflow: tier override %s → %s", settings.tier.value, params.tier.value)
+            settings.tier = params.tier
+
+        # No second clarification prompt — the entry form already
         # collects everything we need. Earlier versions added an
         # explicit `ConfirmationInput("Use defaults / Customize")`
         # here, but it duplicated the form the user just filled and

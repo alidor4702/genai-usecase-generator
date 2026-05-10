@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.config import Tier
+
 # ----------------------------------------------------------------------------
 # Top-level enums
 # ----------------------------------------------------------------------------
@@ -118,13 +120,20 @@ class CriteriaWeights(BaseModel):
         )
 
 
-class WorkflowEntryInput(BaseModel):
-    """Le Chat's entry form schema — only the two fields a typical user
-    cares about. Le Chat auto-renders THIS as the input form on the
-    assistant. Power-user knobs (criteria weights, research depth) are
-    NOT on this model so they don't appear in the form. The workflow's
-    entrypoint expands this into a full `WorkflowInput` using
-    server-side defaults.
+class WorkflowInput(BaseModel):
+    """Top-level input to GenAIUseCaseWorkflow.
+
+    Le Chat auto-renders this schema as the workflow's entry form on
+    the assistant. The Pydantic `title` + `description` on each field
+    drive the labels and helper text the user sees. Field declaration
+    order is the form order; we put the most-likely-edited fields
+    first (company, focus, tier) and the power-user knobs last
+    (research depth, weights).
+
+    All fields except `company_name` have sensible defaults so a user
+    can submit the form by just typing a company name. The advanced
+    fields are visible but pre-filled — a user who scrolls past them
+    gets the same behaviour as one who tunes them.
     """
 
     company_name: str = Field(
@@ -132,44 +141,55 @@ class WorkflowEntryInput(BaseModel):
         max_length=200,
         title="Company",
         description=(
-            "Type the company you want use cases for. Try **Carrefour**, "
-            "**Mistral AI**, **L'Oréal**, **Veolia**, or **BNP Paribas**."
+            "The company you want GenAI use cases for. Try **Carrefour**, "
+            "**Mistral AI**, **L'Oréal**, **Veolia**, or **BNP Paribas** — "
+            "or any public company by legal or trade name."
         ),
     )
     focus_area: FocusArea = Field(
         default=FocusArea.GENERAL,
         title="Focus area",
         description=(
-            "Bias the use cases toward a surface. **General** is balanced "
-            "and is the right pick most of the time."
+            "Which surface to bias the use cases toward. **General** is "
+            "balanced and is the right pick most of the time. **Operations** "
+            "biases toward supply chain / cost / efficiency. **Customer** "
+            "biases toward CX / personalisation. **Sustainability** biases "
+            "toward ESG / compliance."
         ),
     )
-
-
-class WorkflowInput(BaseModel):
-    """Internal pipeline input — the full structured config consumed by
-    activities. CLI / web app / API construct this directly with all
-    fields. Le Chat builds it inside the workflow entrypoint by
-    expanding `WorkflowEntryInput` with server-side defaults for
-    weights + research_depth.
-    """
-
-    company_name: str = Field(min_length=1, max_length=200)
-    focus_area: FocusArea = FocusArea.GENERAL
-    weights: CriteriaWeights = Field(default_factory=CriteriaWeights)
-    research_depth: ResearchDepth = ResearchDepth.MEDIUM
-
-    @classmethod
-    def from_entry(cls, entry: WorkflowEntryInput) -> WorkflowInput:
-        """Build a full WorkflowInput from a Le Chat entry form. Uses
-        server defaults for weights + research_depth (the slim entry
-        form omits those knobs)."""
-        return cls(
-            company_name=entry.company_name,
-            focus_area=entry.focus_area,
-            weights=CriteriaWeights(),
-            research_depth=ResearchDepth.MEDIUM,
-        )
+    tier: Tier = Field(
+        default=Tier.STANDARD,
+        title="Performance tier",
+        description=(
+            "Speed vs depth trade-off. **Fast** (~125s) uses Mistral Medium "
+            "for the use-case prose and skips polish/attribution — "
+            "Phase 3 benchmark showed equal-or-better confidence on Carrefour. "
+            "**Standard** (~215s) is the default — Mistral Large 3 for prose, "
+            "full guardrails, web_search budget 2. **Max** (~225s) adds more "
+            "grounding: web_search 4, deep-read top-5, judge T=0.05, rescue "
+            "cap 18 — pick this when claim density matters more than time."
+        ),
+    )
+    research_depth: ResearchDepth = Field(
+        default=ResearchDepth.MEDIUM,
+        title="Research depth",
+        description=(
+            "How many parallel research signals to gather. **Low** is "
+            "Wikipedia + verified-companies index + existing-AI-initiatives "
+            "lookup. **Medium** (default) adds recent news with deep-read. "
+            "**High** also pulls career pages (slow, ~30s extra)."
+        ),
+    )
+    weights: CriteriaWeights = Field(
+        default_factory=CriteriaWeights,
+        title="Advanced — criteria weights",
+        description=(
+            "Per-criterion weight in the score. Defaults to 0.2 each "
+            "(equal). Override only if you have a strong opinion — e.g. "
+            "set Mistral suitability higher to bias toward use cases that "
+            "lean into Mistral's distinctive strengths."
+        ),
+    )
 
 
 class WorkflowStatus(BaseModel):
