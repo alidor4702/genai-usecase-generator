@@ -58,22 +58,27 @@ async def render_report_activity(
     quality: QualitySignals,
     meta_review: MetaEvalReview | None,
     intro_text: str,
-) -> str:
-    """Construct the typed Report + render it to markdown. Pure compute,
-    no I/O, but lives in an activity to dodge the workflow sandbox's
-    Pydantic-isinstance issue.
+) -> dict[str, object]:
+    """Construct the typed Report + render it. Pure compute, no I/O, but
+    lives in an activity to dodge the workflow sandbox's Pydantic
+    isinstance issue.
 
-    Returns the full markdown report (intro + 3 use cases + footer +
-    transparency block) as one string.
+    Returns a plain dict (not a typed model) so the result crosses the
+    activity boundary cleanly:
+
+      full_markdown: str  — single-document Markdown for CLI / web /
+                            persistence (mermaid blocks inline)
+      chunks:        dict — structured pieces for per-use-case canvas
+                            rendering on Le Chat (executive_summary,
+                            list of use_cases each with body_md +
+                            diagram_mermaid, verification_md)
     """
-    # Inline-import the renderer so the workflow class doesn't need to
-    # see it at registration time.
-    from src.ui.render import render_report_to_markdown
+    from src.ui.render import render_report_to_chunks, render_report_to_markdown
 
     async with trace_step(
         "render",
         "render_report",
-        "render_report_to_markdown",
+        "render_report",
         inputs_summary=f"company={ctx.identity.name!r} top_3={len(top_use_cases)}",
     ) as ev:
         report = Report(
@@ -87,9 +92,13 @@ async def render_report_activity(
             meta_review=meta_review,
             intro_text=intro_text,
         )
-        md = render_report_to_markdown(report)
-        ev.outputs_summary = f"{len(md)} bytes"
-    return md
+        full_md = render_report_to_markdown(report)
+        chunks = render_report_to_chunks(report)
+        ev.outputs_summary = f"{len(full_md)} bytes · {len(chunks['use_cases'])} use cases"  # type: ignore[arg-type]
+    return {
+        "full_markdown": full_md,
+        "chunks": chunks,
+    }
 
 
 def _unused_imports() -> None:  # noqa: D401

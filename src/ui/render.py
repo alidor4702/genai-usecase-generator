@@ -120,7 +120,18 @@ def _format_example_output_md(raw: str) -> str:
     return f"**Example output:**\n```\n{stripped}\n```"
 
 
-def _format_use_case_md(uc: EnrichedUseCase, specificity: float | None) -> str:
+def _format_use_case_md(
+    uc: EnrichedUseCase,
+    specificity: float | None,
+    *,
+    include_mermaid: bool = True,
+) -> str:
+    """Render one use case to markdown.
+
+    `include_mermaid=False` skips the trailing fenced ```mermaid``` block —
+    used when the caller plans to ship the diagram as its own resource
+    (e.g. Le Chat per-use-case canvas pair).
+    """
     parts: list[str] = []
     parts.append(f"### {uc.title}")
     if uc.builds_on_existing and uc.builds_on_note:
@@ -164,10 +175,11 @@ def _format_use_case_md(uc: EnrichedUseCase, specificity: float | None) -> str:
         parts.append("**Grounded in:** " + ", ".join(uc.grounded_in))
     if specificity is not None:
         parts.append(f"_Specificity score: {specificity:.2f}_")
-    cleaned_mermaid = _clean_mermaid(uc.blueprint_mermaid)
-    if cleaned_mermaid:
-        decorated = _decorate_mermaid(cleaned_mermaid, uc.blueprint_pattern.value)
-        parts.append("\n**Architecture blueprint:**\n```mermaid\n" + decorated + "\n```")
+    if include_mermaid:
+        cleaned_mermaid = _clean_mermaid(uc.blueprint_mermaid)
+        if cleaned_mermaid:
+            decorated = _decorate_mermaid(cleaned_mermaid, uc.blueprint_pattern.value)
+            parts.append("\n**Architecture blueprint:**\n```mermaid\n" + decorated + "\n```")
     return "\n".join(parts)
 
 
@@ -350,6 +362,56 @@ def _rejected_md(rejected: list[RejectedCandidate]) -> str:
     if not rejected:
         return "_(no near-misses — top-3 candidates passed verification cleanly)_"
     return "\n".join(f"- **{r.title}** — {r.one_line_reason}" for r in rejected)
+
+
+def render_report_to_chunks(report: Report) -> dict[str, Any]:
+    """Structured rendering — for surfaces that want each use case shipped as
+    its own document (Le Chat per-use-case canvases). Returns a dict with:
+
+      executive_summary: str  — draft banner (if any) + intro + considered-but-not-selected
+      use_cases:        list[dict] — one per top-3 use case, each with:
+                          title, body_md (no mermaid), diagram_mermaid, blueprint_pattern
+      verification_md:  str  — quality signals + fact-check details + meta-eval verdict
+
+    Plain dict / list / str values throughout so the result crosses the
+    Mistral Workflows activity boundary cleanly without Pydantic
+    isinstance issues.
+    """
+    exec_parts: list[str] = []
+    if report.meta_review is not None and (
+        not report.meta_review.sales_engineer_ready
+        or report.meta_review.confidence < 0.70
+    ):
+        exec_parts.append(_draft_banner_md(report))
+        exec_parts.append("")
+    exec_parts.append(_intro_md(report.company, report.top_use_cases))
+    exec_parts.append("")
+    exec_parts.append("## Considered but not selected")
+    exec_parts.append(_rejected_md(report.rejected_appendix))
+
+    use_cases: list[dict[str, str]] = []
+    for i, uc in enumerate(report.top_use_cases):
+        spec = (
+            report.quality.specificity_per_use_case[i]
+            if i < len(report.quality.specificity_per_use_case)
+            else None
+        )
+        cleaned = _clean_mermaid(uc.blueprint_mermaid)
+        decorated = _decorate_mermaid(cleaned, uc.blueprint_pattern.value) if cleaned else ""
+        use_cases.append(
+            {
+                "title": uc.title,
+                "body_md": _format_use_case_md(uc, spec, include_mermaid=False),
+                "diagram_mermaid": decorated,
+                "blueprint_pattern": uc.blueprint_pattern.value,
+            }
+        )
+
+    return {
+        "executive_summary": "\n".join(exec_parts),
+        "use_cases": use_cases,
+        "verification_md": _quality_footer_md(report.quality, report.meta_review),
+    }
 
 
 def render_report_to_markdown(report: Report) -> str:
