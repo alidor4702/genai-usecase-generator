@@ -1,17 +1,23 @@
-# Render Blueprint — declarative deploy config for the FastAPI backend.
+# Render Blueprint — declarative deploy config for the backend.
 #
-# Usage: in Render's UI, click "New" → "Blueprint", point it at this repo.
-# Render reads this file, provisions the service, and sets up auto-deploy
-# on every push to main.
+# Two services here:
+#  1. compastral-api      — FastAPI HTTP surface for the Vercel frontend.
+#                           Endpoints: /healthz, /generate, /status/{id},
+#                           /events/{id}, /report/{id}, /grounding/{id}.
+#  2. compastral-worker   — Mistral Workflows worker that registers
+#                           GenAIUseCaseWorkflow with the runtime so the
+#                           assistant published to Le Chat actually has
+#                           someone to fulfil its requests. MUST be on a
+#                           paid plan; Render forbids worker services on
+#                           the free tier (workers need to stay always-on
+#                           and free instances sleep after 15min idle).
 #
-# The standalone Next.js app deploys separately on Vercel (see standalone/
-# README) since Vercel's Next.js detection is best-in-class.
+# The standalone Next.js app deploys separately on Vercel.
 #
-# Plan note: `free` sleeps after 15min idle and kills SSE long-connections
-# when the service goes to sleep mid-run. For a reliable demo, upgrade
-# to `starter` ($7/mo, always-warm) or `standard` ($25/mo, 2GB RAM) in
-# the Render dashboard. The setting here is the floor — Render's UI
-# choice wins.
+# Plan note: `free` for the API sleeps after 15min idle and kills SSE
+# long-connections when the service goes to sleep mid-run. For a reliable
+# demo, upgrade to `starter` ($7/mo, always-warm) in the Render dashboard.
+# The Render UI's plan choice wins over what's in this file.
 
 services:
   - type: web
@@ -42,3 +48,29 @@ services:
       # production. Comma-separated for multiple origins.
       - key: CORS_ORIGINS
         sync: false
+
+  - type: worker
+    name: compastral-worker
+    runtime: python
+    plan: starter            # workers MUST be paid; free not allowed
+    region: frankfurt
+    branch: main
+    rootDir: .
+    buildCommand: pip install uv && uv sync --frozen
+    startCommand: uv run python -m scripts.run_worker
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12
+      # Same Mistral + Tavily keys as the API service — set in Render
+      # dashboard. Don't share across services automatically (`sync: false`)
+      # because each service has its own env scope.
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: TIER
+        value: standard
+      # The workflow id Mistral runtime registers under. Must match the
+      # `name=` arg in the @workflow.define decorator (src/workflow.py).
+      - key: DEPLOYMENT_NAME
+        value: genai-usecase-generator
