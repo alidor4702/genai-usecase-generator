@@ -61,7 +61,9 @@ with _temporal_workflow.unsafe.imports_passed_through():
     from src.activities.verify_per_candidate import verify_top_candidates_activity
     from src.activities.web_verify import web_verify_unsupported_claims_activity
     from src.config import settings
-    from src.ui.render import render_report_to_markdown
+    # Note: src.ui.render helpers are imported inline at use-site in run()
+    # so the workflow class definition stays import-light (Mistral Workflows
+    # sandbox loads this module at registration time).
 
 # Pure typed-models module — no I/O, safe at definition time
 from src.models import (
@@ -349,7 +351,10 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             f"scored against the five-criteria rubric and verified against "
             f"{len(ctx.existing_ai_initiatives)} existing AI initiative(s) discovered during research."
         )
-        report = Report(
+        # Build Report mainly for typed validation + future Canvas/Components
+        # paths. The actual content sent to Le Chat is the per-use-case
+        # markdown built from `enriched_uses` + `signals` directly below.
+        _report = Report(
             company=ctx,
             weights_used=params.weights,
             focus_area=params.focus_area,
@@ -360,32 +365,48 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             meta_review=review,
             intro_text=intro,
         )
+        del _report  # silence F841 — used only for validation side-effect
 
-        # Le Chat output strategy:
-        # 1. Final return = ChatAssistantWorkflowOutput with two content
-        #    chunks: a TextOutput intro + a ResourceOutput wrapping a
-        #    Canvas (text/markdown). Canvas is Le Chat's first-class
-        #    rich-document primitive — the report renders as a clean
-        #    markdown document in a side panel with a clickable title.
-        #    Mermaid diagrams in the markdown render natively.
-        # 2. Why NOT UIComponentResource(Column(...)): that path was
-        #    causing the Le Chat conversation to hang post-render in v8/v9.
-        #    The Canvas+markdown path is the documented Le Chat surface
-        #    used by the SDK's own examples, much more reliable.
-        markdown_body = render_report_to_markdown(report)
-        title_company = ctx.identity.name
-        canvas = workflows_mistralai.CanvasResource(
-            canvas=workflows_mistralai.CanvasPayload(
-                type="text/markdown",
-                title=f"GenAI use cases — {title_company}",
-                content=markdown_body,
-            )
-        )
-        content_blocks: list[workflows_mistralai.ContentChunk] = [
+        # Le Chat output strategy — chunked plain TextOutput:
+        # The simplest pattern the SDK's own example workflows use for
+        # long markdown content (see
+        # mistralai/workflows/examples/assist/workflow_extract_markdown.py).
+        # Le Chat renders TextOutput as markdown with mermaid blocks
+        # supported. Splitting into multiple chunks (intro / each use
+        # case / quality footer) keeps any individual message under
+        # ~10 KB which is within Le Chat's per-message comfort zone.
+        #
+        # Why NOT Canvas / UIComponentResource here: both add a
+        # serialisation layer that's harder to debug when something
+        # fails. The v9 hang was almost certainly the
+        # UIComponentResource(Column(...)) shape; v9.1 first tried
+        # CanvasResource(text/markdown) but reports were failing in
+        # Le Chat post-render anyway, possibly because the 20-25 KB
+        # markdown body was hitting an undocumented size limit. Plain
+        # TextOutput chunks are the safest path.
+        chunks: list[workflows_mistralai.ContentChunk] = [
             workflows_mistralai.TextOutput(text=intro),
-            workflows_mistralai.ResourceOutput(resource=canvas),
         ]
+        # One TextOutput per use case (with the case's full prose +
+        # blueprint mermaid). Then a final TextOutput for the quality
+        # footer + considered-but-not-selected list.
+        from src.ui.render import (  # noqa: PLC0415 — kept inline so workflow
+            _format_use_case_md,    # determinism rules don't drag the helper
+            _quality_footer_md,     # into the top-of-module import graph.
+            _rejected_md,
+        )
+        for i, uc in enumerate(enriched_uses):
+            spec = (
+                signals.specificity_per_use_case[i]
+                if i < len(signals.specificity_per_use_case)
+                else None
+            )
+            uc_md = _format_use_case_md(uc, spec)
+            chunks.append(workflows_mistralai.TextOutput(text=uc_md))
+        footer_md = "## Considered but not selected\n" + _rejected_md(rejected) + "\n\n"
+        footer_md += _quality_footer_md(signals, review)
+        chunks.append(workflows_mistralai.TextOutput(text=footer_md))
 
         self.current_step = "complete"
         self.progress_percent = 100.0
-        return workflows_mistralai.ChatAssistantWorkflowOutput(content=content_blocks)
+        return workflows_mistralai.ChatAssistantWorkflowOutput(content=chunks)
