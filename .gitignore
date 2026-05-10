@@ -24,7 +24,11 @@ dist/
 .env.*.local
 
 # Data — generated artifacts
-data/genai_usecases.db
+# data/genai_usecases.db is COMMITTED so the deployed app has the
+# precedent corpus available without a 15min rebuild on every boot.
+# It's ~50 MB (under GitHub's 100 MB hard limit; soft warning at 50MB).
+# Rebuild locally with `uv run python -m scripts.build_data all` and
+# re-commit if you regenerate.
 data/genai_usecases.db-journal
 data/cache/
 
