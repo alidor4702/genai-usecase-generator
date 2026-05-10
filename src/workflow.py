@@ -61,9 +61,12 @@ with _temporal_workflow.unsafe.imports_passed_through():
     from src.activities.verify_per_candidate import verify_top_candidates_activity
     from src.activities.web_verify import web_verify_unsupported_claims_activity
     from src.config import settings
-    # Note: src.ui.render helpers are imported inline at use-site in run()
-    # so the workflow class definition stays import-light (Mistral Workflows
-    # sandbox loads this module at registration time).
+    # render_report_to_markdown lives inside imports_passed_through so
+    # the sandbox doesn't re-evaluate it on every workflow invocation.
+    # Importing inside the entrypoint body was causing the post-tasks
+    # workflow failure in Le Chat — the sandbox blocks dynamic imports
+    # during workflow execution.
+    from src.ui.render import render_report_to_markdown
 
 # Pure typed-models module — no I/O, safe at definition time
 from src.models import (
@@ -393,36 +396,69 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             })
 
         # ── Build the final report ────────────────────────────────────
+        # Heavy instrumentation: every step here is logged so the worker
+        # log shows EXACTLY where any post-tasks failure happens. Earlier
+        # debugging was hampered by silent failures between the last
+        # task_from completion and the workflow output being delivered
+        # to Le Chat.
         self.current_step = "render"
         self.progress_percent = 98.0
+        logger.info("workflow: render — building intro + Report")
         intro = (
             f"GenAI use cases for **{ctx.identity.name}** — three customer-ready proposals "
             f"scored against the five-criteria rubric and verified against "
             f"{len(ctx.existing_ai_initiatives)} existing AI initiative(s) discovered during research."
         )
-        report = Report(
-            company=ctx,
-            weights_used=params.weights,
-            focus_area=params.focus_area,
-            research_depth=params.research_depth,
-            top_use_cases=enriched_uses,
-            rejected_appendix=rejected,
-            quality=signals,
-            meta_review=review,
-            intro_text=intro,
-        )
+        try:
+            report = Report(
+                company=ctx,
+                weights_used=params.weights,
+                focus_area=params.focus_area,
+                research_depth=params.research_depth,
+                top_use_cases=enriched_uses,
+                rejected_appendix=rejected,
+                quality=signals,
+                meta_review=review,
+                intro_text=intro,
+            )
+            logger.info("workflow: Report constructed (%d use cases, %d rejected, %d claims)",
+                        len(report.top_use_cases), len(report.rejected_appendix),
+                        len(signals.fact_check))
+        except Exception as e:
+            logger.exception("workflow: Report construction FAILED — %s", e)
+            return workflows_mistralai.ChatAssistantWorkflowOutput(
+                content=[workflows_mistralai.TextOutput(text=(
+                    f"GenAI use cases for **{ctx.identity.name}** — pipeline completed but "
+                    f"failed to construct the structured report: `{type(e).__name__}: {e}`."
+                ))]
+            )
 
-        # Le Chat output — single TextOutput. This is the shape every
-        # official SDK assistant example uses (workflow_extract_markdown,
-        # workflow_chat_parse, workflow_embeddings, workflow_insurance_claims).
-        # No multi-chunk content[]; no Canvas; no UIComponentResource —
-        # those alternative paths each caused different failures
-        # (hang post-render, size limits, multi-chunk display issues).
-        from src.ui.render import render_report_to_markdown  # noqa: PLC0415
-        combined_md = render_report_to_markdown(report)
+        try:
+            combined_md = render_report_to_markdown(report)
+            logger.info("workflow: render_report_to_markdown OK — %d bytes", len(combined_md))
+        except Exception as e:
+            logger.exception("workflow: render_report_to_markdown FAILED — %s", e)
+            return workflows_mistralai.ChatAssistantWorkflowOutput(
+                content=[workflows_mistralai.TextOutput(text=(
+                    f"{intro}\n\n"
+                    f"_(report rendering failed: `{type(e).__name__}: {e}`)_"
+                ))]
+            )
+
+        try:
+            output = workflows_mistralai.ChatAssistantWorkflowOutput(
+                content=[workflows_mistralai.TextOutput(text=combined_md)]
+            )
+            logger.info("workflow: ChatAssistantWorkflowOutput built OK — about to return")
+        except Exception as e:
+            logger.exception("workflow: ChatAssistantWorkflowOutput build FAILED — %s", e)
+            return workflows_mistralai.ChatAssistantWorkflowOutput(
+                content=[workflows_mistralai.TextOutput(text=(
+                    f"{intro}\n\n"
+                    f"_(output construction failed: `{type(e).__name__}: {e}`)_"
+                ))]
+            )
 
         self.current_step = "complete"
         self.progress_percent = 100.0
-        return workflows_mistralai.ChatAssistantWorkflowOutput(
-            content=[workflows_mistralai.TextOutput(text=combined_md)]
-        )
+        return output
