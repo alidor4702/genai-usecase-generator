@@ -18,6 +18,7 @@ Per docs/architecture.md, the structure is:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -101,6 +102,25 @@ def _cost_badge_variant(uc: EnrichedUseCase) -> str:
     )
 
 
+def _format_example_output_md(raw: str) -> str:
+    """Render an example_output value as a fenced code block. The LLM
+    typically emits a Python-dict-shaped literal; parse it via
+    ast.literal_eval and pretty-print as JSON when possible, fall back
+    to the raw string in a generic code block on parse failure.
+    """
+    import ast
+
+    stripped = raw.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            parsed = ast.literal_eval(stripped)
+            pretty = json.dumps(parsed, indent=2, ensure_ascii=False)
+            return f"**Example output:**\n```json\n{pretty}\n```"
+        except (ValueError, SyntaxError):
+            pass
+    return f"**Example output:**\n```\n{stripped}\n```"
+
+
 def _format_use_case_md(uc: EnrichedUseCase, specificity: float | None) -> str:
     parts: list[str] = []
     parts.append(f"### {uc.title}")
@@ -114,7 +134,14 @@ def _format_use_case_md(uc: EnrichedUseCase, specificity: float | None) -> str:
     parts.append("")
     parts.append(f"**Example input:** `{uc.example_input}`")
     parts.append("")
-    parts.append(f"**Example output:** {uc.example_output}")
+    # example_output is `str` in the model but the LLM commonly emits
+    # a Python-dict-shaped literal (single quotes, no indentation).
+    # Inline that as-is reads as one giant blob in any markdown
+    # renderer. Try to parse it as a Python literal and re-emit as
+    # pretty-printed JSON; on any parse failure fall back to the raw
+    # string in a generic fenced code block so it at least gets fixed
+    # spacing.
+    parts.append(_format_example_output_md(uc.example_output))
     parts.append("")
     ttv_label = uc.time_to_value.estimate
     if uc.time_to_value.basis.value == "ballpark_assumption":

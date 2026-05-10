@@ -433,27 +433,49 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         self.current_step = "complete"
         self.progress_percent = 100.0
 
-        # Le Chat rendering — the report is a long structured markdown
-        # document with headings, tables, and mermaid blocks. Returning
-        # it as a plain TextOutput shows nothing in the chat (Le Chat
-        # treats large TextOutput content as a chat bubble that doesn't
-        # parse markdown structure). The canonical pattern for "show the
-        # user a structured document" is a Canvas:
-        #   1) push the canvas into chat via send_assistant_message so
-        #      the user sees an "open canvas" affordance immediately
-        #   2) include the same chunks in ChatAssistantWorkflowOutput so
-        #      the workflow's terminal output carries the report
+        # Le Chat rendering — the markdown report contains embedded
+        # ```mermaid``` blocks that the Le Chat text/markdown canvas
+        # doesn't parse (they show as raw flowchart text). The SDK
+        # supports a separate canvas type="mermaid" that renders an
+        # actual diagram. Strategy:
+        #   1) extract every ```mermaid``` block from the markdown
+        #   2) replace each in the chat-bound markdown with a short
+        #      "(architecture diagram below)" stub so the surrounding
+        #      prose still flows
+        #   3) emit the markdown body as a text/markdown canvas, then
+        #      one mermaid-typed canvas per extracted diagram
         #
-        # Reference: SDK docstring example #3 in
-        #   .venv/.../mistralai/workflows/plugins/mistralai/lechat.py
+        # The full markdown including diagrams still flows to the
+        # standalone web app + CLI through the activity's return value.
+        # Only the chat-bound copy gets stripped.
+        _MERMAID_BLOCK_RX = re.compile(
+            r"\n*\*\*Architecture blueprint:\*\*\n```mermaid\s*\n(.*?)\n```",
+            re.DOTALL,
+        )
+        extracted_diagrams: list[str] = []
+        for match in _MERMAID_BLOCK_RX.finditer(combined_md):
+            extracted_diagrams.append(match.group(1).strip())
+        chat_md = _MERMAID_BLOCK_RX.sub(
+            "\n\n_(architecture diagram in canvas below)_\n",
+            combined_md,
+        )
+        # Catch any stray ```mermaid``` blocks that didn't match the
+        # heading-prefixed pattern (e.g. trace render in some surfaces).
+        chat_md = re.sub(
+            r"```mermaid\s*\n.*?\n```",
+            "_(diagram available in the standalone web report)_",
+            chat_md,
+            flags=re.DOTALL,
+        )
+
         canvas_title = f"GenAI use cases — {ctx.identity.name}"
         canvas_chunks: list[
             workflows_mistralai.TextOutput | workflows_mistralai.ResourceOutput
         ] = [
             workflows_mistralai.TextOutput(
                 text=(
-                    f"Report ready for **{ctx.identity.name}** — open the canvas to read "
-                    f"the full three-use-case report with the verification ledger."
+                    f"Report ready for **{ctx.identity.name}** — open the canvases below "
+                    f"to read the full three-use-case report and view each architecture diagram."
                 )
             ),
             workflows_mistralai.ResourceOutput(
@@ -461,14 +483,31 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
                     canvas=workflows_mistralai.CanvasPayload(
                         type="text/markdown",
                         title=canvas_title,
-                        content=combined_md,
+                        content=chat_md,
                     ),
                 ),
             ),
         ]
+        for i, diagram in enumerate(extracted_diagrams):
+            canvas_chunks.append(
+                workflows_mistralai.ResourceOutput(
+                    resource=workflows_mistralai.CanvasResource(
+                        canvas=workflows_mistralai.CanvasPayload(
+                            type="mermaid",
+                            title=f"Architecture — use case {i + 1}",
+                            content=diagram,
+                        ),
+                    ),
+                )
+            )
+
         try:
             await workflows_mistralai.send_assistant_message(canvas_chunks)
-            logger.info("workflow: send_assistant_message OK — canvas pushed to chat")
+            logger.info(
+                "workflow: send_assistant_message OK — pushed %d chunks (%d mermaid canvases)",
+                len(canvas_chunks),
+                len(extracted_diagrams),
+            )
         except Exception as e:  # noqa: BLE001
             logger.exception("workflow: send_assistant_message FAILED — %s", e)
 
