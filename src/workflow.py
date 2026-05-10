@@ -432,6 +432,44 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
 
         self.current_step = "complete"
         self.progress_percent = 100.0
-        return workflows_mistralai.ChatAssistantWorkflowOutput(
-            content=[workflows_mistralai.TextOutput(text=combined_md)]
-        )
+
+        # Le Chat rendering — the report is a long structured markdown
+        # document with headings, tables, and mermaid blocks. Returning
+        # it as a plain TextOutput shows nothing in the chat (Le Chat
+        # treats large TextOutput content as a chat bubble that doesn't
+        # parse markdown structure). The canonical pattern for "show the
+        # user a structured document" is a Canvas:
+        #   1) push the canvas into chat via send_assistant_message so
+        #      the user sees an "open canvas" affordance immediately
+        #   2) include the same chunks in ChatAssistantWorkflowOutput so
+        #      the workflow's terminal output carries the report
+        #
+        # Reference: SDK docstring example #3 in
+        #   .venv/.../mistralai/workflows/plugins/mistralai/lechat.py
+        canvas_title = f"GenAI use cases — {ctx.identity.name}"
+        canvas_chunks: list[
+            workflows_mistralai.TextOutput | workflows_mistralai.ResourceOutput
+        ] = [
+            workflows_mistralai.TextOutput(
+                text=(
+                    f"Report ready for **{ctx.identity.name}** — open the canvas to read "
+                    f"the full three-use-case report with the verification ledger."
+                )
+            ),
+            workflows_mistralai.ResourceOutput(
+                resource=workflows_mistralai.CanvasResource(
+                    canvas=workflows_mistralai.CanvasPayload(
+                        type="text/markdown",
+                        title=canvas_title,
+                        content=combined_md,
+                    ),
+                ),
+            ),
+        ]
+        try:
+            await workflows_mistralai.send_assistant_message(canvas_chunks)
+            logger.info("workflow: send_assistant_message OK — canvas pushed to chat")
+        except Exception as e:  # noqa: BLE001
+            logger.exception("workflow: send_assistant_message FAILED — %s", e)
+
+        return workflows_mistralai.ChatAssistantWorkflowOutput(content=canvas_chunks)
