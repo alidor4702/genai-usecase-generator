@@ -52,13 +52,15 @@ async def _deep_read_body(http: httpx.AsyncClient, url: str) -> str:
     """Fetch + extract body text, returning "" on any failure."""
     try:
         html = await fetch_html(http, url, timeout_s=12.0)
-    except Exception:
+    except Exception as e:
+        logger.warning("web_verify._deep_read_body: fetch failed (%s) — %s", url, type(e).__name__)
         return ""
     if html is None:
         return ""
     try:
         return extract_main_text(html, max_chars=8000) or ""
-    except Exception:
+    except Exception as e:
+        logger.warning("web_verify._deep_read_body: extract failed (%s) — %s", url, type(e).__name__)
         return ""
 
 logger = logging.getLogger(__name__)

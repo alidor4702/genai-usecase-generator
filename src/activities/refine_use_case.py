@@ -141,6 +141,11 @@ async def refine_use_case_activity(
             )
 
 
-def parse_use_case_index(chat_msg: str, edited: str, n: int) -> int | None:
-    """Re-export for the workflow to call before invoking the activity."""
-    return _identify_use_case_index(f"{chat_msg} {edited}", n)
+# `_identify_use_case_index` was wired into an earlier
+# CanvasInput-based refine flow that parsed which use case from the
+# user's free-form chat message. The current FormInput-based flow
+# (workflow.py: RefineFeedbackForm) gets the target use case as a
+# structured `target: str` field from the form, so the heuristic
+# parser is no longer called. Kept for reference + potential future
+# use; was previously re-exported as `parse_use_case_index` but no
+# callers remain.

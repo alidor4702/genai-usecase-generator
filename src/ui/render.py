@@ -604,80 +604,10 @@ def render_report_to_markdown(report: Report) -> str:
     return "\n".join(parts)
 
 
-def render_report_to_components(report: Report) -> Any:
-    """Rich UI Components composition for Le Chat / Workflows runtime.
-
-    Imports are inside the function so this module remains importable even if
-    the conversational_ui_components plugin path differs across SDK minor
-    versions. We construct a Column with sub-blocks; the calling site wraps
-    this into a `ResourceOutput(UIComponentResource(...))`.
-    """
-    try:
-        from mistralai.workflows.plugins.mistralai.conversational_ui_components import (
-            Badge,
-            Card,
-            Column,
-            Markdown,
-            PieChart,
-            Row,
-        )
-    except ImportError:  # pragma: no cover
-        # Plugin not available in this environment — caller will fall back
-        # to the markdown rendering.
-        return None
-
-    use_case_cards = []
-    for i, uc in enumerate(report.top_use_cases):
-        spec_score = (
-            report.quality.specificity_per_use_case[i]
-            if i < len(report.quality.specificity_per_use_case)
-            else 0.0
-        )
-        badges = Row(
-            children=[
-                Badge(
-                    variant=_impact_badge_variant(uc), children=f"Impact: {uc.impact_tier.value}"
-                ),
-                Badge(
-                    variant=_cost_badge_variant(uc),
-                    children=f"Cost: {uc.operating_cost_tier.value}",
-                ),
-                Badge(variant="default", children=f"Complexity: {uc.complexity_tier.value}"),
-                Badge(
-                    variant=("warning" if uc.time_to_value.basis.value == "ballpark_assumption" else "default"),
-                    children=(
-                        f"TTV: ~{uc.time_to_value.estimate} (estimated)"
-                        if uc.time_to_value.basis.value == "ballpark_assumption"
-                        else f"TTV: {uc.time_to_value.estimate}"
-                    ),
-                ),
-            ]
-        )
-        body = Markdown(content=_format_use_case_md(uc, spec_score))
-        use_case_cards.append(Card(title=uc.title, description=None, children=[badges, body]))
-
-    cost_data = [
-        {
-            "label": uc.title[:40],
-            "value": {"low": 1, "medium": 2, "high": 3, "unknown": 1}.get(
-                uc.operating_cost_tier.value, 1
-            ),
-        }
-        for uc in report.top_use_cases
-    ]
-    cost_card = Card(title="Estimated cost distribution", children=[PieChart(data=cost_data)])
-    rejected_card = Card(
-        title="Considered but not selected",
-        children=[Markdown(content=_rejected_md(report.rejected_appendix))],
-    )
-    quality_md = Markdown(content=_quality_footer_md(report.quality, report.meta_review))
-
-    return Column(
-        children=[
-            Markdown(content=_intro_md(report.company, report.top_use_cases)),
-            Row(children=use_case_cards),
-            cost_card,
-            rejected_card,
-            quality_md,
-        ]
-    )
+# Earlier draft had `render_report_to_components` here — an in-file
+# UIComponent tree builder. The current Le Chat path uses
+# `src/ui/le_chat_components.py:build_report_component_tree` which is
+# fed by the chunks dict from `render_report_to_chunks` above, keeping
+# the activity-boundary serialisation clean. The in-file builder was
+# orphaned and removed to avoid drift between two implementations of
+# the same idea.

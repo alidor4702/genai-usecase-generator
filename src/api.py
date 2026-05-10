@@ -167,17 +167,22 @@ async def healthz() -> dict[str, str]:
 @app.post("/generate", response_model=GenerateResponse)
 async def generate(req: GenerateRequest) -> GenerateResponse:
     run_id = str(uuid.uuid4())
+    # The per-request tier flows through both channels: it's set on
+    # `WorkflowInput.tier` so the workflow class can see it (and the
+    # workflow body's tier-override block at workflow.py:190 picks it
+    # up), AND it's mutated onto the global `settings.tier` so all
+    # the activities downstream — which read `settings.tier` — also
+    # respect it. Concurrent runs with different tiers will race on
+    # the singleton; that's acknowledged for the take-home's single-
+    # user usage and would migrate to a context-var in production.
+    effective_tier = req.tier or settings.tier
     params = WorkflowInput(
         company_name=req.company_name,
         focus_area=req.focus_area,
         weights=req.weights or CriteriaWeights(),
         research_depth=req.research_depth,
+        tier=effective_tier,
     )
-    # Per-request tier override is applied to the global settings
-    # singleton for the duration of this run. Concurrent runs with
-    # different tiers will race; for the take-home's single-user usage
-    # this is acceptable. Production would migrate to a context-var so
-    # each in-flight request carries its own tier independently.
     if req.tier is not None and req.tier != settings.tier:
         logger.info("api: run %s overriding tier %s → %s", run_id, settings.tier.value, req.tier.value)
         settings.tier = req.tier
@@ -406,9 +411,14 @@ async def events(run_id: str) -> StreamingResponse:
             live_step = state.current_step
             if state.trace is not None and state.trace.events:
                 live_step = state.trace.events[-1].step
+            # JSON-serialise the payload (was f-string string interpolation
+            # — would produce invalid JSON if `live_step` ever contained
+            # a `"` or non-ASCII char, e.g. a step name with an apostrophe).
+            progress_payload = json.dumps(
+                {"step": live_step, "progress": state.progress_percent}
+            )
             yield (
-                f"event: progress\ndata: "
-                f'{{"step":"{live_step}","progress":{state.progress_percent}}}\n\n'
+                f"event: progress\ndata: {progress_payload}\n\n"
             ).encode("utf-8")
             if state.status in ("completed", "failed", "refused"):
                 yield f"event: done\ndata: {state.status}\n\n".encode("utf-8")

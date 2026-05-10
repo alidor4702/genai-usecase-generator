@@ -30,7 +30,6 @@ from src.activities.source_judge import judge_claim_sources_activity
 from src.activities.web_verify import web_verify_unsupported_claims_activity
 from src.activities.research import (
     enrich_company_context_activity,
-    gather_bundle_for_company,
     research_company_activity,
 )
 from src.activities.retrieve import retrieve_precedents_activity
@@ -61,8 +60,6 @@ class PipelineResult:
     trace: RunTrace
     ledger: EvidenceLedger
     refusal_reason: str | None = None
-    regenerated_use_case_id: str | None = None
-    original_confidence: float | None = None
 
 
 async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
@@ -122,9 +119,11 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
     retrieved = await retrieve_precedents_activity(ctx, settings.top_k_precedents)
     log.info("retrieved %d precedents", len(retrieved.items))
 
-    # Step 3 — Generate candidates
+    # Step 3 — Generate candidates. Reuses the `bundle` from step 1
+    # (line 78) — earlier versions re-fetched here, which was wasted
+    # work even with the cache and added ledger churn. The bundle is
+    # immutable so the step-1 fetch is the canonical source.
     log.info("=== Step 3: Generate candidates ===")
-    bundle = await gather_bundle_for_company(params.company_name, params.research_depth)
     batch, ledger = await generate_candidates_activity(
         ctx, retrieved, params.focus_area.value, True, raw_bundle=bundle, ledger=ledger
     )
@@ -171,16 +170,6 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
         review.confidence,
         review.weakest_use_case_id,
     )
-
-    # Step 7b — Targeted regen DEPRECATED in v9. The web-verify rescue +
-    # source-judge + final-qualify chain (steps 7c–7e) now handles the
-    # fact-check class of issues that regen used to cover, without
-    # rewriting an entire use case. Trace data showed the 2nd meta-eval
-    # after regen rarely beat the first by >0.05 (noise, not signal),
-    # and the regen step burned ~50s per run. Removed entirely; the v7
-    # chain does the same job better and more transparently.
-    original_confidence = review.confidence  # kept for downstream logging
-    regenerated_use_case_id: str | None = None  # always None in v9
 
     # Step 7c — Web-verify rescue: rescue claims the meta-eval flagged
     # unsupported but are real and verifiable from public sources. Two-tier
@@ -238,13 +227,6 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
     # Quality signals
     log.info("=== Quality signals ===")
     signals = await compute_quality_signals_activity(enriched_uses, ctx, fact_claims)
-    if regenerated_use_case_id:
-        log.info(
-            "regen footer: original_confidence=%.2f, regenerated=%s, final_confidence=%.2f",
-            original_confidence,
-            regenerated_use_case_id,
-            review.confidence,
-        )
 
     intro = (
         f"GenAI use cases for {ctx.identity.name}: three customer-ready proposals "
@@ -267,6 +249,4 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
         report=report,
         trace=trace,
         ledger=ledger,
-        regenerated_use_case_id=regenerated_use_case_id,
-        original_confidence=original_confidence,
     )

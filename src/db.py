@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS precedents (
     outcome TEXT,
     deep_content TEXT,
     source_url TEXT,
-    source TEXT,             -- 'evidently' | 'google_cloud_1001' | 'google_cloud_blueprints'
+    source TEXT,             -- 'evidently' | 'google_cloud_1001' | 'google_cloud_1302' | 'google_cloud_blueprints'
     embedding TEXT           -- JSON array of floats; NULL until embedded
 );
 CREATE INDEX IF NOT EXISTS idx_precedents_industry ON precedents(industry);

@@ -222,5 +222,5 @@ async def score_candidates_activity(
     return ScoredBatch(
         scored=scored,
         weights_used=weights,
-        self_consistency_passes=2,
+        self_consistency_passes=1 if settings.enable_single_pass_score else 2,
     )

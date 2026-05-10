@@ -22,7 +22,6 @@ from typing import Any
 from mistralai.workflows.plugins.mistralai.conversational_ui_components import (
     Alert,
     Badge,
-    ButtonLink,
     Card,
     Column,
     Markdown,

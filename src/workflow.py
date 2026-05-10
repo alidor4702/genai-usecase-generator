@@ -61,21 +61,13 @@ with _temporal_workflow.unsafe.imports_passed_through():
     from src.activities.select_enrich import select_and_enrich_activity
     from src.activities.source_judge import judge_claim_sources_activity
     from src.activities.verify_per_candidate import verify_top_candidates_activity
-    from src.activities.refine_use_case import (
-        parse_use_case_index,
-        refine_use_case_activity,
-    )
+    from src.activities.refine_use_case import refine_use_case_activity
     from src.activities.web_verify import web_verify_unsupported_claims_activity
     from src.config import settings
     from src.ui.le_chat_components import build_report_component_tree
 
 # Pure typed-models module — no I/O, safe at definition time
-from src.models import (
-    CriteriaWeights,
-    FocusArea,
-    WorkflowInput,
-    WorkflowStatus,
-)
+from src.models import WorkflowInput, WorkflowStatus
 
 logger = logging.getLogger(__name__)
 

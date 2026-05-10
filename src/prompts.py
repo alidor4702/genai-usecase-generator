@@ -132,7 +132,7 @@ Mistral emphasis (conditional — only when `mistral_emphasis=true`):
 - Where naturally applicable, favor patterns that play to Mistral's distinctive
   strengths: EU sovereignty, open-weight self-hosting, multilingual European
   text, competitive cost-quality balance.
-- Don't pad every candidate with Mistral framing. If only 4-5 of the 12
+- Don't pad every candidate with Mistral framing. If only half the
   candidates lean on Mistral-distinctive strengths, that's correct. Don't pad.
 
 Regeneration mode (conditional — only when `regeneration_attempt > 1`):
@@ -167,7 +167,7 @@ You are a strict, calibrated rubric judge. The user will provide:
 
 For EACH candidate, output a score (1-10) AND a one-sentence rationale FOR
 EACH of the five criteria — that is, 5 score+rationale pairs per candidate.
-Total: 60 score+rationale pairs for a 12-candidate batch.
+The batch size matches what the generator produced (8 by default, configurable).
 
 Hard rules:
 - Iconic potential is HARD-CAPPED at 1-2 if the candidate substantially

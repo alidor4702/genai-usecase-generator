@@ -8,7 +8,7 @@ See docs/architecture.md and docs/methodology.md for the full design.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -75,7 +75,7 @@ class BlueprintPattern(StrEnum):
 class Novelty(StrEnum):
     """Whether a candidate is adapted from existing precedents or a novel direction.
 
-    Per the methodology, ≥3 of the 12 candidates MUST be `novel_direction` — not
+    Per the methodology, ≥3 of the generated candidates MUST be `novel_direction` — not
     direct adaptations of any single precedent. This field carries that meta-signal
     in a structured way rather than embedded in the description text.
     """
@@ -451,7 +451,8 @@ class RetrievedPrecedents(BaseModel):
 
 
 class Candidate(BaseModel):
-    """One of the 12 use cases produced by the generator."""
+    """One of the candidate use cases produced by the generator
+    (`candidates_to_generate` per run, 8 by default — v9.3+ default; was 12)."""
 
     id: str  # short slug, e.g. "kyc-doc-review"
     title: str
@@ -473,7 +474,8 @@ class Candidate(BaseModel):
 
 
 class CandidateBatch(BaseModel):
-    """The 12 candidates returned by the generator."""
+    """The candidates returned by the generator (configurable count;
+    8 by default — see `Settings.candidates_to_generate`)."""
 
     candidates: list[Candidate]
     diversity_score: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -713,10 +715,9 @@ class Report(BaseModel):
         return self
 
 
-class RefusalReport(BaseModel):
-    """Returned in place of Report when research signal is too sparse."""
-
-    company_name: str
-    reason: str
-    signals_attempted: list[str]
-    suggested_clarifications: list[str]
+# `RefusalReport` was an earlier sketch for a structured refusal payload.
+# In the current pipeline, refusals are signalled by
+# `PipelineResult.refused=True` + `refusal_reason: str`, and the workflow
+# class emits a `ChatAssistantWorkflowOutput` with a plain-text message
+# directly. No callers ever constructed `RefusalReport`, so it's removed
+# to avoid dead-code drift.

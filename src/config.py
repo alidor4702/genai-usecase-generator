@@ -94,7 +94,7 @@ class Settings(BaseSettings):
         le=1.0,
         description=(
             "Avg pairwise candidate-cosine ABOVE this triggers a diversity "
-            "regen of the 12 candidates. Calibrated against observed corpus "
+            "regen of the candidate batch. Calibrated against observed corpus "
             "behavior: random pairs in our corpus cluster at mean=0.78, std=0.03. "
             "Candidate descriptions written by the same enrichment LLM in the "
             "same voice cluster even tighter (~0.83-0.87 baseline). Threshold of "
@@ -115,7 +115,9 @@ class Settings(BaseSettings):
     cache_ttl_news_seconds: int = 24 * 3600  # 24 hours
     cache_ttl_jobs_seconds: int = 48 * 3600  # 48 hours
     cache_ttl_existing_initiatives_seconds: int = 7 * 24 * 3600  # 7 days
-    cache_ttl_per_candidate_verify_seconds: int = 7 * 24 * 3600  # 7 days
+    # (Per-candidate verification deliberately uncached — every Tavily
+    # search uses a query specific to the company+candidate pair, so
+    # cache reuse across runs is rare and the freshness matters.)
 
     # ---- HTTP behavior -----------------------------------------------------
 
