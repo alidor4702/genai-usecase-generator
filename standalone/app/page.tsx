@@ -42,7 +42,7 @@ export default function Landing() {
         <SiteNav />
 
         <section className="flex flex-col items-center text-center pt-8 pb-12">
-          <CompassDial size={280} />
+          <CompassDial size={280} showReadout={false} showControls={false} />
           <div className="text-[11px] uppercase tracking-[0.25em] text-mistral-orangeBright font-bold mt-8">
             Mistral Proto · Take-home
           </div>
