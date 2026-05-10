@@ -166,22 +166,30 @@ function JsonView({ value, depth }: { value: unknown; depth: number }) {
     const entries = Object.entries(value as Record<string, unknown>);
     return (
       <dl className={`${depth === 0 ? "p-3" : ""} divide-y divide-mistral-border/50`}>
-        {entries.map(([k, v]) => (
-          <div key={k} className="grid grid-cols-[max-content_1fr] gap-3 py-1.5">
-            <dt
-              className={`text-[11px] uppercase tracking-wider font-semibold ${
-                k.startsWith("_")
-                  ? "text-amber-300/70 italic"
-                  : "text-mistral-orangeBright"
-              }`}
-            >
-              {k}
-            </dt>
-            <dd className="text-[13.5px] min-w-0">
-              <JsonView value={v} depth={depth + 1} />
-            </dd>
-          </div>
-        ))}
+        {entries.map(([k, v]) => {
+          // The model emits keys like `_disclaimer` / `_note` to mark
+          // illustrative metadata in the example output. Render those
+          // with the underscore stripped + a friendlier label so the
+          // user doesn't see a literal "_DISCLAIMER" in the UI.
+          const isMeta = k.startsWith("_");
+          const display = isMeta ? k.slice(1).replace(/_/g, " ") : k.replace(/_/g, " ");
+          return (
+            <div key={k} className="grid grid-cols-[max-content_1fr] gap-3 py-1.5">
+              <dt
+                className={`text-[11px] uppercase tracking-wider font-semibold whitespace-nowrap ${
+                  isMeta
+                    ? "text-amber-300/80 italic"
+                    : "text-mistral-orangeBright"
+                }`}
+              >
+                {isMeta ? `ⓘ ${display}` : display}
+              </dt>
+              <dd className="text-[13.5px] min-w-0">
+                <JsonView value={v} depth={depth + 1} />
+              </dd>
+            </div>
+          );
+        })}
       </dl>
     );
   }
@@ -600,7 +608,7 @@ function BlueprintBlock({ uc }: { uc: EnrichedUseCase }) {
         <span className="font-bold">{meta.label}</span>
         <span className="text-ink-muted">pattern</span>
       </div>
-      <MermaidDiagram source={uc.blueprint_mermaid} id={uc.id} />
+      <MermaidDiagram source={uc.blueprint_mermaid} id={uc.id} pattern={uc.blueprint_pattern} />
     </div>
   );
 }

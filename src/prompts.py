@@ -384,11 +384,17 @@ Numbers and named-entity claims:
   peer outcomes.
     Bad: "Sephora's deployment reduced cart abandonment by 22%."
     Bad: "Estée Lauder reported $40M in annual savings."
+    Bad: "Codestral is the ONLY EU-sovereign code-generation model with
+          open-weight licensing." (superlative without precedent
+          backing — same shape as a fabricated peer %)
     Good: "Sephora has reported material engagement gains from comparable
            beauty-tech rollouts."
     Good: "8-15% non-revenue water reduction has been reported in the
            cited Citylitics precedent." — only if "8-15%" or near figure
            appears verbatim in that precedent.
+    Good: "Codestral is a leading EU-sovereign code-generation option."
+          (qualitative — same rule as quantitative peer outcomes; superlatives
+          ('only', 'first', 'largest') count as quantitative claims here.)
 - ABSTRACT-PEER ATTRIBUTION RULE (v9 — strengthened) — the peer rule
   also applies when you DON'T name a specific peer. Phrases like "peer
   deployments report 12-18%", "comparable retailers have seen 30-50%

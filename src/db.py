@@ -61,6 +61,27 @@ CREATE TABLE IF NOT EXISTS cache (
     ttl_seconds INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_cache_fetched_at ON cache(fetched_at);
+
+-- Run history. Persists every completed pipeline run so the FE
+-- /history page can browse past reports and the user can re-open any
+-- one. Stored as full JSON so we don't have to migrate the schema
+-- every time the Report model evolves.
+CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY,
+    company_name TEXT NOT NULL,
+    status TEXT NOT NULL,          -- 'completed' | 'refused' | 'failed'
+    started_at INTEGER NOT NULL,   -- unix epoch
+    completed_at INTEGER NOT NULL,
+    fact_check_pass_rate REAL,
+    meta_eval_confidence REAL,
+    sales_engineer_ready INTEGER,  -- 0 / 1
+    report_json TEXT,              -- Report.model_dump_json() — null on refused/failed
+    report_markdown TEXT,
+    refusal_reason TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_company ON runs(company_name);
 """
 
 
@@ -244,3 +265,75 @@ async def load_all_precedents_for_index() -> list[dict[str, object]]:
         ) as cur:
             rows = await cur.fetchall()
     return [dict(r) for r in rows]
+
+
+# ---- runs (run history persistence) ----------------------------------------
+
+
+async def persist_run(
+    *,
+    run_id: str,
+    company_name: str,
+    status: str,
+    started_at: int,
+    completed_at: int,
+    fact_check_pass_rate: float | None,
+    meta_eval_confidence: float | None,
+    sales_engineer_ready: bool | None,
+    report_json: str | None,
+    report_markdown: str | None,
+    refusal_reason: str | None,
+    error: str | None,
+) -> None:
+    """Save a finished pipeline run to the runs table. Idempotent on
+    run_id so re-runs (or retries) overwrite cleanly."""
+    async with connect() as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO runs
+            (run_id, company_name, status, started_at, completed_at,
+             fact_check_pass_rate, meta_eval_confidence, sales_engineer_ready,
+             report_json, report_markdown, refusal_reason, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                run_id, company_name, status, started_at, completed_at,
+                fact_check_pass_rate, meta_eval_confidence,
+                int(sales_engineer_ready) if sales_engineer_ready is not None else None,
+                report_json, report_markdown, refusal_reason, error,
+            ),
+        )
+        await db.commit()
+
+
+async def list_runs(limit: int = 50, offset: int = 0) -> list[dict[str, object]]:
+    """Browse history — most-recent-first. Returns lightweight rows
+    (no full report_json) for the FE list view."""
+    async with connect() as db:
+        async with db.execute(
+            """SELECT run_id, company_name, status, started_at, completed_at,
+            fact_check_pass_rate, meta_eval_confidence, sales_engineer_ready,
+            refusal_reason, error
+            FROM runs
+            ORDER BY started_at DESC
+            LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_run(run_id: str) -> dict[str, object] | None:
+    """Fetch a full persisted run including report_json + markdown."""
+    async with connect() as db:
+        async with db.execute(
+            "SELECT * FROM runs WHERE run_id = ?",
+            (run_id,),
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def count_runs() -> int:
+    async with connect() as db:
+        async with db.execute("SELECT COUNT(*) FROM runs") as cur:
+            row = await cur.fetchone()
+            return int(row[0]) if row else 0

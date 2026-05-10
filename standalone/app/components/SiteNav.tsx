@@ -10,10 +10,11 @@ import ThemeToggle from "./ThemeToggle";
  * technical /architecture), and the light/dark theme toggle.
  */
 // /grounding is per-run, accessed via UseCaseCard citation chips —
-// kept out of the top-nav since there's no meaningful "list of all
-// runs" page (state is in-memory per-process).
+// kept out of the top-nav since it requires a runId.
 const NAV: { href: string; label: string }[] = [
-  { href: "/", label: "Generate" },
+  { href: "/", label: "Home" },
+  { href: "/generate", label: "Generate" },
+  { href: "/history", label: "History" },
   { href: "/how-it-works", label: "How it works" },
   { href: "/architecture", label: "Architecture" },
 ];

@@ -64,10 +64,39 @@ function stripMermaidFences(s: string): string {
 }
 
 /**
+ * Per-blueprint-pattern color palettes — used to give each diagram an
+ * overall accent that matches the pattern category. Same palette as the
+ * UseCaseCard's left bar so the diagram visually belongs to its card.
+ */
+const PATTERN_COLORS: Record<string, { fill: string; stroke: string; color: string }> = {
+  rag:                  { fill: "#1e3a8a", stroke: "#60a5fa", color: "#dbeafe" },
+  agent_with_tools:     { fill: "#7c2d12", stroke: "#fa552e", color: "#fed7aa" },
+  document_ai_pipeline: { fill: "#064e3b", stroke: "#34d399", color: "#d1fae5" },
+  fine_tuned_domain:    { fill: "#581c87", stroke: "#a855f7", color: "#f3e8ff" },
+  hybrid_retrieval:     { fill: "#134e4a", stroke: "#14b8a6", color: "#ccfbf1" },
+};
+
+function decorateWithPattern(body: string, pattern: string | undefined): string {
+  if (!pattern) return body;
+  const palette = PATTERN_COLORS[pattern];
+  if (!palette || !body) return body;
+  const cls = `bp_${pattern}`;
+  const style = `classDef ${cls} fill:${palette.fill},stroke:${palette.stroke},color:${palette.color},stroke-width:1.5px`;
+  // Pull every node id from the body so we can apply the class to all of
+  // them. Mermaid graph nodes typically start with non-whitespace token
+  // followed by [ ( { or ->.
+  const NODE_RE = /^\s*([A-Za-z_][\w]*)\s*[\[\(\{]/gm;
+  const ids = new Set<string>();
+  for (const m of body.matchAll(NODE_RE)) ids.add(m[1]);
+  if (ids.size === 0) return body;
+  return body + "\n" + style + "\nclass " + [...ids].sort().join(",") + ` ${cls}`;
+}
+
+/**
  * Heuristically classify each node by its label, then emit classDef +
  * class lines so Mermaid renders LLM nodes / data stores / users
- * differently. This is on top of the per-pattern color the backend
- * already applies via _decorate_mermaid in src/ui/render.py.
+ * differently. This stacks on top of the per-pattern color from
+ * decorateWithPattern.
  */
 function decorateWithNodeTypes(body: string): string {
   const NODE_RE = /^\s*([A-Za-z_][\w]*)\s*[\[\(\{]([^\]\)\}]*)[\]\)\}]/gm;
@@ -111,7 +140,15 @@ function decorateWithNodeTypes(body: string): string {
   return body + "\n" + lines.join("\n");
 }
 
-export default function MermaidDiagram({ source, id }: { source: string; id: string }) {
+export default function MermaidDiagram({
+  source,
+  id,
+  pattern,
+}: {
+  source: string;
+  id: string;
+  pattern?: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -128,7 +165,9 @@ export default function MermaidDiagram({ source, id }: { source: string; id: str
     // mermaid's parser ("UnknownDiagramError"). Defensive strip here so any
     // caller that hands us raw markdown body still works.
     const stripped = stripMermaidFences(source);
-    const decorated = decorateWithNodeTypes(stripped);
+    // Stack: strip fences → apply per-pattern classDef → apply node-type colors.
+    const patternColored = decorateWithPattern(stripped, pattern);
+    const decorated = decorateWithNodeTypes(patternColored);
     loadMermaid(theme)
       .then((mermaid) => mermaid.render(`mermaid-${id}-${theme}`, decorated))
       .then(({ svg }) => {

@@ -35,11 +35,19 @@ type ByUseCase = {
   inspired_by: string[];
 };
 
+type GroundingSummary = {
+  total_entries: number;
+  by_kind: Record<string, number>;
+  kinds_used: string[];
+  kinds_not_used: string[];
+};
+
 type GroundingResponse = {
   run_id: string;
   company_name: string;
   entries: Entry[];
   by_use_case: ByUseCase[];
+  summary?: GroundingSummary;
 };
 
 const API =
@@ -161,6 +169,57 @@ export default function GroundingPage() {
 
         {data && entries.length > 0 && (
           <>
+            {/* Used / not-used overview — at-a-glance summary of which
+                source kinds the pipeline drew from for this run. The
+                "not used" list shows what was AVAILABLE but didn't fire
+                (e.g. depth=low → no jobs / no news, or company didn't
+                trigger gap-fill). */}
+            {data.summary && (
+              <div className="glass rounded-xl p-4 sm:p-5 mb-4">
+                <h2 className="text-[11px] uppercase tracking-[0.18em] text-mistral-orangeBright font-bold mb-3">
+                  Data sources used in this run
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wider text-ink-muted mb-1.5">
+                      Used ({data.summary.kinds_used.length})
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {data.summary.kinds_used.map((k) => {
+                        const meta = SOURCE_KIND_LABEL[k];
+                        const count = data.summary?.by_kind[k] ?? 0;
+                        return (
+                          <span
+                            key={k}
+                            className={`px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider rounded border ${meta?.tone || "bg-slate-500/15 text-slate-300 border-slate-500/40"}`}
+                          >
+                            {meta?.label || k}
+                            <span className="ml-1.5 font-mono opacity-70">×{count}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {data.summary.kinds_not_used.length > 0 && (
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wider text-ink-muted mb-1.5">
+                        Available but didn't fire ({data.summary.kinds_not_used.length})
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {data.summary.kinds_not_used.map((k) => (
+                          <span
+                            key={k}
+                            className="px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider rounded border border-mistral-border text-ink-muted opacity-60"
+                          >
+                            {SOURCE_KIND_LABEL[k]?.label || k}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <div className="glass rounded-xl p-4 sm:p-5 mb-6 space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <label className="block">

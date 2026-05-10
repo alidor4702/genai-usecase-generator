@@ -12,45 +12,35 @@ import SiteNav from "../components/SiteNav";
  * verification chain. No marketing copy.
  */
 
+// Pipeline rendered LR (left-to-right) so it uses the page width
+// instead of a tall vertical column. Each phase wraps to multiple
+// lines via <br/> so the boxes stay narrow but readable.
 const PIPELINE_MERMAID = `
-flowchart TD
-  Input([Company name + weights + focus + depth])
-  Research[1. Research synthesis<br/>Mistral Medium @ T=0.2]
-  GapFill[1b. Gap-fill<br/>Tavily targeted searches]
-  Retrieve[2. Retrieve precedents<br/>Mistral Embed + cosine top-k]
-  Generate[3. Generate 12 candidates<br/>Mistral Medium @ T=0.7<br/>+ web_search tool]
-  Score[4. Score 5 criteria<br/>Mistral Small @ T=0.2 then 0.4<br/>self-consistency]
-  Verify[5. Per-candidate verification<br/>Mistral Small @ T=0.1<br/>+ Tavily deep-read<br/>+ supporting_snippets]
-  Enrich[6. Select + enrich top-3<br/>Mistral Large @ T=0.4]
-  Polish[6a. Polish<br/>Mistral Small<br/>full-pool excerpts]
-  MetaEval[7. Meta-evaluate<br/>Mistral Medium @ T=0.1<br/>per-claim fact-check]
-  WebVerify[7c. Web-verify rescue<br/>Tavily + 2-tier credibility<br/>deterministic]
-  Judge[7d. Source judge<br/>Mistral Small @ T=0.1<br/>claim-source coherence]
-  FinalQ[7e. Final qualify<br/>Mistral Small<br/>surgical rewrite]
-  Signals[Quality signals<br/>diversity + specificity]
-  Output([Markdown + structured Report])
+flowchart LR
+  Input([Company name + knobs])
+  Research["1. Research<br/>Mistral Medium 3.5"]
+  GapFill["1b. Gap-fill<br/>Tavily"]
+  Retrieve["2. Retrieve<br/>cosine top-k"]
+  Generate["3. Generate 12<br/>Mistral Medium 3.5<br/>+ web_search"]
+  Score["4. Score 5 criteria<br/>Mistral Small × 2"]
+  Verify["5. Verify top-3<br/>Tavily + Small"]
+  Enrich["6. Enrich top-3<br/>Mistral Large 3"]
+  Polish["6a. Polish<br/>full-pool"]
+  MetaEval["7. Meta-eval<br/>per-claim<br/>Mistral Medium 3.5"]
+  WebVerify["7c. Web-verify<br/>2-tier rescue"]
+  Judge["7d. Judge<br/>self-correcting<br/>Mistral Small"]
+  FinalQ["7e. Final qualify<br/>Mistral Small"]
+  Signals["Quality signals"]
+  Output([Report + persistence])
 
-  Input --> Research
-  Research --> GapFill
-  GapFill --> Retrieve
-  Retrieve --> Generate
-  Generate --> Score
-  Score --> Verify
-  Verify --> Enrich
-  Enrich --> Polish
-  Polish --> MetaEval
-  MetaEval --> WebVerify
-  WebVerify --> Judge
-  Judge --> FinalQ
-  FinalQ --> Signals
-  Signals --> Output
+  Input --> Research --> GapFill --> Retrieve --> Generate --> Score --> Verify --> Enrich --> Polish --> MetaEval --> WebVerify --> Judge --> FinalQ --> Signals --> Output
 
   classDef llm fill:#fa552e,stroke:#fdba8c,color:#fff,stroke-width:2px
   classDef live fill:#1e3a8a,stroke:#60a5fa,color:#dbeafe,stroke-width:2px
   classDef preset fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:2px
   classDef io fill:#1f2530,stroke:#fa552e,color:#fff,stroke-width:1.5px
   class Research,Generate,Score,Verify,Enrich,Polish,MetaEval,Judge,FinalQ,Signals llm
-  class GapFill,WebVerify,Verify live
+  class GapFill,WebVerify live
   class Retrieve preset
   class Input,Output io
 `;
@@ -79,28 +69,34 @@ flowchart LR
 
 const VERIFICATION_CHAIN_MERMAID = `
 flowchart TD
-  C[Substantive claim from prose] --> Pool{Anchored in<br/>evidence pool?}
-  Pool -- yes --> Pass1[passed=true<br/>source_kind=evidence:ev-id]
-  Pool -- no --> WV[Step 7c: Tavily search]
+  C[Substantive claim] --> Pool{Anchored in<br/>evidence pool?}
+  Pool -- yes --> Pass1[supported<br/>source_kind=evidence:ev-id]
+  Pool -- no --> WV[7c. Web-verify Tavily]
   WV --> Tier{Domain credibility}
-  Tier -- "allowlisted<br/>(Reuters/FT/.gov...)" --> V1[passed=true<br/>rescue_tier=verified]
-  Tier -- "non-allowlist<br/>but entity/number anchor" --> V2[passed=true<br/>rescue_tier=corroborated]
-  Tier -- nothing --> Fail[passed=false]
-  V1 --> Judge{Step 7d: Mistral Small judge<br/>does the source actually support?}
+  Tier -- "allowlisted (Reuters/FT/.gov...)" --> V1[supported<br/>rescue_tier=verified]
+  Tier -- "non-allowlist + entity/number anchor" --> V2[supported<br/>rescue_tier=corroborated]
+  Tier -- nothing --> Fail[unsupported]
+  V1 --> Judge{7d. Source-judge<br/>v9 self-correcting<br/>3 verdicts}
   V2 --> Judge
   Pass1 --> Judge
-  Judge -- yes --> Final[Render with citation]
-  Judge -- "no — judge_rejected" --> FailJ[passed=false<br/>judge_reason set]
-  Fail --> FQ[Step 7e: surgical qualitative rewrite]
+  Judge -- supported --> Final[Render with citation]
+  Judge -- "corrected (numeric/rank/temporal)" --> Patch[Patch prose inline<br/>with source value]
+  Judge -- "unsupported (judge_rejected)" --> FailJ[unsupported]
+  Patch --> Final
+  Fail --> FQ[7e. Final qualify<br/>surgical rewrite]
   FailJ --> FQ
   FQ --> Final
+  Final --> DB[(SQLite runs table)]
+  DB --> History[/history page replay]
 
   classDef ok fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1.5px
   classDef fail fill:#7c2d12,stroke:#fa552e,color:#fed7aa,stroke-width:1.5px
   classDef gate fill:#fa552e,stroke:#fdba8c,color:#fff,stroke-width:2px
-  class Pass1,V1,V2,Final ok
+  classDef store fill:#1e3a8a,stroke:#60a5fa,color:#dbeafe,stroke-width:1.5px
+  class Pass1,V1,V2,Final,Patch ok
   class Fail,FailJ,FQ fail
   class Pool,Tier,Judge gate
+  class DB,History store
 `;
 
 const MODELS = [
@@ -155,18 +151,54 @@ export default function Architecture() {
           </p>
         </header>
 
-        {/* Pipeline diagram */}
-        <Section title="Full pipeline" subtitle="13 steps · activities decorated with the determinism rules of Mistral Workflows">
-          <MermaidDiagram source={PIPELINE_MERMAID} id="arch-pipeline" />
-          <Legend
-            items={[
-              { color: "bg-mistral-orange", label: "LLM activity" },
-              { color: "bg-blue-700", label: "Live web (Tavily / HTTP)" },
-              { color: "bg-emerald-700", label: "Preset corpus / index" },
-              { color: "bg-slate-600", label: "I/O" },
-            ]}
-          />
-        </Section>
+        {/* Pipeline diagram + determinism rules — side-by-side on wide
+            screens so the right column isn't empty next to the LR mermaid.
+            On narrow screens this stacks. */}
+        <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6 mb-8">
+          <Section
+            title="Full pipeline"
+            subtitle="14 steps · activities decorated with Mistral Workflows determinism rules"
+          >
+            <MermaidDiagram source={PIPELINE_MERMAID} id="arch-pipeline" />
+            <Legend
+              items={[
+                { color: "bg-mistral-orange", label: "LLM activity" },
+                { color: "bg-blue-700", label: "Live web (Tavily / HTTP)" },
+                { color: "bg-emerald-700", label: "Preset corpus / index" },
+                { color: "bg-slate-600", label: "I/O" },
+              ]}
+            />
+          </Section>
+          <Section
+            title="Determinism contract"
+            subtitle="Why the workflow class is pure orchestration"
+          >
+            <ul className="text-sm text-slate-300 space-y-2.5 leading-relaxed">
+              <li>
+                <code className="text-mistral-orangeBright text-xs">src/workflow.py</code>
+                {" "}has no <code className="text-xs">datetime.now()</code>, no
+                {" "}<code className="text-xs">random()</code>, no I/O. The
+                runtime replays workflow code from history; non-determinism
+                breaks replay.
+              </li>
+              <li>
+                Every side-effect — every LLM call, web fetch, DB read,
+                embedding — lives in an activity with an explicit
+                {" "}<code className="text-xs">start_to_close_timeout</code>.
+              </li>
+              <li>
+                Every activity uses typed Pydantic I/O. Every LLM call uses
+                {" "}<code className="text-xs">response_format</code> with
+                a JSON schema. No prose-parsing downstream.
+              </li>
+              <li>
+                Output type is{" "}
+                <code className="text-mistral-orangeBright text-xs">ChatAssistantWorkflowOutput</code>
+                {" "}so the workflow publishes as a Le Chat assistant.
+              </li>
+            </ul>
+          </Section>
+        </div>
 
         {/* Model + temperature table */}
         <Section title="Models and temperatures" subtitle="Locked per CLAUDE.md; deviations require explicit approval">
@@ -287,36 +319,6 @@ export default function Architecture() {
         </Section>
 
         {/* Determinism & workflow rules */}
-        <Section
-          title="Determinism rules"
-          subtitle="Why the workflow class is pure orchestration"
-        >
-          <ul className="text-sm text-slate-300 space-y-2 leading-relaxed">
-            <li>
-              <code className="text-mistral-orangeBright">src/workflow.py</code> contains
-              no <code>datetime.now()</code>, no <code>random()</code>, no I/O. The
-              Mistral Workflows runtime replays the workflow code from history when
-              workers restart; any non-determinism breaks replay.
-            </li>
-            <li>
-              Every side effect — every LLM call, web fetch, DB read, embedding —
-              lives in an activity decorated with{" "}
-              <code className="text-mistral-orangeBright">@workflows.activity</code>
-              {" "}and an explicit <code>start_to_close_timeout</code>.
-            </li>
-            <li>
-              Every activity has typed Pydantic input + typed Pydantic output. Every
-              LLM call uses <code>response_format</code> with a JSON schema. No
-              prose-parsing downstream.
-            </li>
-            <li>
-              The full output type is{" "}
-              <code className="text-mistral-orangeBright">ChatAssistantWorkflowOutput</code>{" "}
-              so the workflow can publish as a Le Chat assistant.
-            </li>
-          </ul>
-        </Section>
-
         <footer className="mt-16 mb-6 pt-6 border-t border-mistral-border text-sm text-ink-muted text-center">
           Want the plain-English version?{" "}
           <a href="/how-it-works" className="text-mistral-orangeBright hover:text-mistral-orange">

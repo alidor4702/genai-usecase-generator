@@ -78,11 +78,15 @@ const PHASES: Phase[] = [
   {
     step: "review",
     title: "7. Review like a senior reviewer",
-    oneLine: "Stress-test every claim before delivery.",
+    oneLine: "Stress-test every claim before delivery — and self-correct when possible.",
     body:
-      "A senior-reviewer pass examines every substantive claim across the three use cases — would a sales engineer comfortably bring this to a customer meeting? Each factual assertion is marked supported (with a source) or unsupported. For unsupported ones, the system runs one more targeted web search ranked by source credibility, then a separate judge reads the result and decides if it actually backs the claim. Anything still unsupported gets surgically rewritten into qualitative phrasing so the report doesn't ship fabricated facts.",
+      "A senior-reviewer pass examines every substantive claim across the three use cases — would a sales engineer comfortably bring this to a customer meeting? Each assertion is marked supported (with a source) or unsupported. For unsupported ones, the system runs one more targeted web search ranked by source credibility, then a separate judge inspects the (claim, source) pair. The judge has three possible verdicts: supported (claim stays), corrected (source contradicts but provides the right value — system patches the prose inline with the source's actual value, attaches the link, marks the claim corrected ↗), or unsupported (real fabrication — surgically rewritten into qualitative phrasing so the report never ships an unverified fact). The whole report is then persisted to a SQLite runs table so it can be re-opened from the History page later.",
     reads: ["Full evidence trail", "One last live web search per flagged claim"],
-    produces: ["Sales-engineer-ready verdict", "Per-claim transparency"],
+    produces: [
+      "Sales-engineer-ready verdict",
+      "Per-claim transparency (supported / corrected / rewritten)",
+      "Persistent record in History",
+    ],
   },
 ];
 
@@ -218,7 +222,7 @@ function FaqSection() {
     },
     {
       q: "How does it avoid making stuff up?",
-      a: "Every factual claim has to be supported by a source the system actually retrieved — Wikipedia, news, Tavily, an evidence ledger built up across the run. Anything the system can't anchor is either rescued via one more targeted web search (with credibility tiers), judged by a separate model, or rewritten into qualitative phrasing. The final report shows a per-claim transparency block with chips like [verified ↗] and [judge: rejected] so the reviewer can audit the chain.",
+      a: "Every factual claim is anchored to a source the system actually retrieved — Wikipedia, news, Tavily, the evidence ledger built up across the run. Anything the system can't anchor is either rescued via one more targeted web search (with credibility tiers), judged by a separate model, or — when the source contradicts a number — corrected inline using the source's actual value (the v9 self-correcting verdict). The final report shows a per-claim transparency block with chips like [verified ↗], [corrected ↗ → 9 European languages], [judge: rejected], or [rewritten qualitatively] so the reviewer can audit the whole chain.",
     },
     {
       q: "Why three use cases, not five or ten?",

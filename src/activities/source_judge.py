@@ -81,6 +81,12 @@ OUTPUT ONE OF THREE VERDICTS:
   "owns ModiFace".
 - Inference from instances. "stores in France, Spain, Italy" supports
   "operates across multiple EU markets".
+- Inference from established context. The snippet establishes facts
+  (location, organisational structure, document origin, founding
+  jurisdiction) from which the claim follows by basic geographic,
+  regulatory, or organisational logic. e.g. "French AI company
+  headquartered in Paris" supports "Paris HQ ensures alignment with
+  EU regulatory frameworks".
 - Direct match.
 
 (2) `corrected` — the snippet CONTRADICTS the claim's specific value

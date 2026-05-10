@@ -90,9 +90,78 @@ async def run_pipeline(params: WorkflowInput, write_md: Path | None) -> int:
         )
         trace_path.write_text(trace_md, encoding="utf-8")
         log.info("wrote trace to %s", trace_path)
+        # Grounding addendum — per-source-kind summary of what fired
+        # vs what was available, plus the full ledger as a transparent
+        # "data sources used" appendix. Same data the /grounding page
+        # surfaces in the FE; here we ship as a static MD companion so
+        # the docs/examples/v* directories stand on their own without
+        # the live API.
+        grounding_path = write_md.with_name(write_md.stem + "_grounding.md")
+        grounding_path.write_text(
+            _render_grounding_md(result, params.company_name), encoding="utf-8"
+        )
+        log.info("wrote grounding addendum to %s", grounding_path)
     print()
     print(md)
     return 0
+
+
+def _render_grounding_md(result, company_name: str) -> str:
+    """Per-source-kind data summary + full ledger entries as markdown."""
+    from collections import Counter
+    from src.models import EvidenceKind
+
+    ledger = result.ledger
+    entries = list(ledger.entries) if ledger else []
+    by_kind: Counter[str] = Counter(
+        ent.source_kind.value if hasattr(ent.source_kind, "value") else str(ent.source_kind)
+        for ent in entries
+    )
+    all_kinds = [k.value for k in EvidenceKind]
+    kinds_used = sorted(by_kind.keys())
+    kinds_not_used = [k for k in all_kinds if k not in by_kind]
+
+    lines = [
+        f"# Grounding addendum — {company_name}",
+        "",
+        "Every external source the pipeline read for this run, classified by",
+        "`source_kind` (matches `src/models.py:EvidenceKind`). The Used /",
+        "Not-used split below tells you at a glance which retrieval paths",
+        "fired vs which were available but didn't trigger (often because of",
+        "research depth, sparse signals, or no rescue claims to chase).",
+        "",
+        f"**Total entries collected:** `{len(entries)}`  ",
+        f"**Kinds used:** `{len(kinds_used)}` / `{len(all_kinds)}`",
+        "",
+        "## Used in this run",
+        "",
+        "| Source kind | Count |",
+        "|---|---|",
+    ]
+    for k in sorted(by_kind, key=lambda x: -by_kind[x]):
+        lines.append(f"| `{k}` | {by_kind[k]} |")
+    if kinds_not_used:
+        lines += [
+            "",
+            "## Available but didn't fire",
+            "",
+            ", ".join(f"`{k}`" for k in kinds_not_used),
+        ]
+    lines += ["", "## Full ledger (every entry)", ""]
+    for ent in entries:
+        kind = ent.source_kind.value if hasattr(ent.source_kind, "value") else str(ent.source_kind)
+        title = (ent.title or "(untitled)").strip()
+        url = ent.url or "(no URL)"
+        excerpt = (ent.content or "").strip().replace("\n", " ")[:280]
+        lines += [
+            f"### `{ent.id}` · `{kind}` · fetched at `{ent.fetched_at_step}`",
+            f"**{title}**  ",
+            f"`{url}`",
+            "",
+            f"> {excerpt}{'…' if len(ent.content or '') > 280 else ''}",
+            "",
+        ]
+    return "\n".join(lines)
 
 
 def main() -> int:

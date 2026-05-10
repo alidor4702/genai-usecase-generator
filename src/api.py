@@ -258,12 +258,68 @@ async def grounding(run_id: str) -> dict[str, object]:
                     "inspired_by": list(uc.inspired_by),
                 }
             )
+    # Summary: source kinds used + counts. Lets the FE render a
+    # "data sources used / not used" overview at the top of /grounding
+    # without re-walking the ledger client-side.
+    by_kind: dict[str, int] = {}
+    for ent in entries:
+        k = str(ent.get("source_kind") or "unknown")
+        by_kind[k] = by_kind.get(k, 0) + 1
+    # The kinds we COULD have used — mirror EvidenceKind in src/models.py.
+    all_known_kinds = [
+        "wikipedia", "news", "tavily", "precedent", "jobs",
+        "existing_initiative", "company_verification", "gap_fill",
+        "generation_tool", "per_candidate_verification", "claim_verification",
+    ]
+    not_used = [k for k in all_known_kinds if k not in by_kind]
+    summary = {
+        "total_entries": len(entries),
+        "by_kind": by_kind,
+        "kinds_used": sorted(by_kind.keys()),
+        "kinds_not_used": not_used,
+    }
     return {
         "run_id": run_id,
         "company_name": state.params.company_name,
         "entries": entries,
         "by_use_case": by_use_case,
+        "summary": summary,
     }
+
+
+@app.get("/runs")
+async def list_runs_endpoint(limit: int = 50, offset: int = 0) -> dict[str, object]:
+    """List persisted runs, most-recent-first. Powers the /history FE page."""
+    from src import db as _db
+    rows = await _db.list_runs(limit=limit, offset=offset)
+    total = await _db.count_runs()
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "runs": rows,
+    }
+
+
+@app.get("/runs/{run_id}")
+async def get_run_endpoint(run_id: str) -> dict[str, object]:
+    """Fetch a persisted run with its full report_json. Used by /history
+    when the user clicks into a past report."""
+    from src import db as _db
+    row = await _db.get_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id} not in history")
+    # report_json is the Report.model_dump_json() string — parse it for
+    # the FE so the frontend doesn't have to.
+    import json as _json
+    parsed: object | None = None
+    if row.get("report_json"):
+        try:
+            parsed = _json.loads(str(row["report_json"]))
+        except (TypeError, _json.JSONDecodeError):
+            parsed = None
+    row["report"] = parsed
+    return row
 
 
 @app.get("/events/{run_id}")
@@ -414,3 +470,33 @@ async def _execute_run(run_id: str) -> None:
         state.current_step = "failed"
     finally:
         state.completed_at = datetime.now(timezone.utc)
+        # Persist to runs table so /history can replay it later. In-memory
+        # _runs dict is process-scoped (lost on restart); the SQLite row
+        # survives. Best-effort — a persistence failure here shouldn't
+        # mask the actual run outcome.
+        try:
+            from src import db as _db
+            await _db.persist_run(
+                run_id=state.run_id,
+                company_name=state.params.company_name,
+                status=state.status,
+                started_at=int((state.started_at or state.completed_at).timestamp()),
+                completed_at=int(state.completed_at.timestamp()),
+                fact_check_pass_rate=(
+                    state.report.quality.fact_check_pass_rate if state.report else None
+                ),
+                meta_eval_confidence=(
+                    state.report.meta_review.confidence
+                    if state.report and state.report.meta_review else None
+                ),
+                sales_engineer_ready=(
+                    state.report.meta_review.sales_engineer_ready
+                    if state.report and state.report.meta_review else None
+                ),
+                report_json=(state.report.model_dump_json() if state.report else None),
+                report_markdown=state.report_markdown,
+                refusal_reason=state.refusal_reason,
+                error=state.error,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("api: persist_run failed for %s (non-fatal)", run_id)
