@@ -194,7 +194,11 @@ def _format_example_output_md(raw: str) -> str:
             # code block doesn't horizontally overflow the canvas /
             # markdown container. Le Chat + most markdown renderers
             # don't wrap inside <pre>; this keeps lines short.
-            pretty = _wrap_json_lines(pretty, max_width=80)
+            # Width 60 (not 80) because CJK characters render 2× wider
+            # than ASCII, so a 64-char Japanese line visually fills ~120
+            # columns and overflows the canvas. 60 leaves room for CJK
+            # without making ASCII lines unnecessarily short.
+            pretty = _wrap_json_lines(pretty, max_width=60)
             return f"**Example output:**\n```json\n{pretty}\n```"
         except (ValueError, SyntaxError):
             pass
@@ -202,12 +206,14 @@ def _format_example_output_md(raw: str) -> str:
 
 
 def _wrap_json_lines(s: str, *, max_width: int = 80) -> str:
-    """Soft-wrap any line longer than `max_width` chars by breaking
-    long string values across lines. JSON is forgiving about whitespace
-    inside string literals when re-displayed visually, so we just
-    insert newlines + leading indent that mimics the existing indent.
-    The line stays a string from the parser's perspective when read
-    back in but the rendered code block fits.
+    """Soft-wrap any line longer than `max_width` chars. Breaks at word
+    boundaries when possible (Western text), falls back to hard-cut at
+    max_width when no space is found within the window (CJK text and
+    other non-space-separated scripts).
+
+    JSON is forgiving about whitespace inside string literals when
+    re-displayed visually, so we just insert newlines + leading indent
+    that mimics the existing indent.
     """
     out: list[str] = []
     for line in s.split("\n"):
@@ -217,17 +223,25 @@ def _wrap_json_lines(s: str, *, max_width: int = 80) -> str:
         # Compute leading indent (preserve it on continuation lines).
         leading_ws = len(line) - len(line.lstrip(" "))
         indent = " " * (leading_ws + 2)
-        # Break on word boundaries every ~max_width chars.
+        # Break every ~max_width chars. Prefer a space within the
+        # window; fall back to a hard cut at max_width if no space
+        # exists (CJK / arabic / no-whitespace scripts) — without this
+        # fallback, lines like the Japanese translated_text overflow
+        # the canvas and force horizontal scroll.
         chunks: list[str] = []
         current = line
         while len(current) > max_width:
-            # Find last space before max_width
             cut = current.rfind(" ", 0, max_width)
-            if cut <= leading_ws + 4:  # no good word boundary; hard cut
+            if cut <= leading_ws + 4:
+                # No usable word boundary — hard-cut at max_width.
                 cut = max_width
             chunks.append(current[:cut].rstrip())
-            current = indent + current[cut:].lstrip()
-        chunks.append(current)
+            remainder = current[cut:].lstrip(" ")
+            current = indent + remainder if remainder else ""
+            if not remainder:
+                break
+        if current:
+            chunks.append(current)
         out.extend(chunks)
     return "\n".join(out)
 

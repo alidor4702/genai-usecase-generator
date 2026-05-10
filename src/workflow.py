@@ -264,7 +264,7 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         self.progress_percent = 35.0
         async with workflows.task_from(
             state=workflows_mistralai.ChatAssistantWorkingTask(
-                type="thinking",
+                type="tool",
                 title="Generating candidate use cases",
                 content="Mistral Medium drafting use cases grounded in the company's data + priorities",
             )
@@ -282,7 +282,7 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         self.progress_percent = 55.0
         async with workflows.task_from(
             state=workflows_mistralai.ChatAssistantWorkingTask(
-                type="thinking",
+                type="tool",
                 title="Scoring against 5 criteria",
                 content="Self-consistency: relevance · iconic potential · impact · feasibility · Mistral fit",
             )
@@ -317,7 +317,7 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         self.progress_percent = 80.0
         async with workflows.task_from(
             state=workflows_mistralai.ChatAssistantWorkingTask(
-                type="thinking",
+                type="tool",
                 title="Writing customer-ready prose",
                 content="Mistral Large 3 drafting the top-3 with descriptions, blueprints, risks",
             )
@@ -333,7 +333,7 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         # ── Review (bundles meta-eval + web-verify + source-judge + final-qualify + quality-signals) ──
         async with workflows.task_from(
             state=workflows_mistralai.ChatAssistantWorkingTask(
-                type="thinking",
+                type="tool",
                 title="Senior-reviewer fact-check",
                 content="Per-claim verification, web-verify rescue, source-judge, qualitative rewrite",
             )
