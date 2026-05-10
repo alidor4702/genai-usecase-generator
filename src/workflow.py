@@ -25,6 +25,7 @@ assistant.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import timedelta
@@ -495,5 +496,88 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("workflow: send_assistant_message FAILED — %s", e)
+
+        # ── Canvas editing for human-in-the-loop refinement ─────────
+        # After the report renders, ship a small editable canvas
+        # that invites the user to flag changes. The CanvasInput
+        # primitive lets the user edit the canvas directly in Le Chat
+        # and submit; we receive the edited content back. Wait up to
+        # 90 seconds — if the user ignores the affordance, the
+        # workflow finishes without the feedback loop.
+        feedback_uri = f"file://canvas/feedback-{company_name.lower().replace(' ', '-').replace(',', '')}"
+        feedback_canvas = workflows_mistralai.CanvasResource(
+            uri=feedback_uri,
+            canvas=workflows_mistralai.CanvasPayload(
+                type="text/markdown",
+                title=f"Refine the report — {company_name}",
+                content=(
+                    f"# Want to refine any of the use cases?\n\n"
+                    f"Edit this canvas with what you'd like changed, then submit. "
+                    f"Examples:\n\n"
+                    f"- _Replace use case 2 with one focused on retail-specific data privacy._\n"
+                    f"- _Tighten the example output of use case 1 — too much illustrative data._\n"
+                    f"- _The Concordis claim in use case 3 wasn't supported — drop the use case._\n\n"
+                    f"Submit when ready, or wait 90 seconds to skip and finish.\n\n"
+                    f"---\n\n"
+                    f"_({company_name} report ready · {len(output_chunks)} chunks shipped above)_"
+                ),
+            ),
+        )
+        try:
+            await workflows_mistralai.send_assistant_message(
+                "Want to refine any of the use cases? Edit the canvas below.",
+                canvas=feedback_canvas,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("workflow: feedback canvas push FAILED — %s", e)
+
+        feedback_text: str | None = None
+        try:
+            feedback = await self.wait_for_input(
+                workflows_mistralai.CanvasInput(
+                    canvas_uri=feedback_uri,
+                    prompt="What would you like to refine? (or leave blank and submit to skip)",
+                ),
+                timeout=90.0,
+            )
+            edited_canvas = getattr(feedback, "canvas", None)
+            edited_content = (
+                str(getattr(edited_canvas, "content", "")) if edited_canvas else ""
+            )
+            chat_input = getattr(feedback, "chatInput", None)
+            chat_msg = str(getattr(chat_input, "message", "")) if chat_input else ""
+            feedback_text = (
+                f"chat: {chat_msg!r}, canvas-edited: {len(edited_content)} chars"
+            )
+            logger.info("workflow: canvas feedback received — %s", feedback_text)
+
+            # Acknowledge the feedback. A v2 of this would parse the
+            # edits, identify which use case was touched, and trigger
+            # a targeted regen via select_and_enrich_activity. For
+            # now we surface the human-in-the-loop primitive working
+            # end-to-end — the parsing + regen wiring is documented
+            # as a planned enhancement in architecture.md.
+            ack_lines = [
+                f"Got your feedback for **{company_name}** — thanks.",
+            ]
+            if chat_msg:
+                ack_lines.append(f"\n**Your note:** {chat_msg}")
+            if edited_content:
+                ack_lines.append(
+                    f"\n_Canvas edit captured ({len(edited_content)} chars). "
+                    f"Targeted regen wiring is documented as a planned enhancement; "
+                    f"this run demonstrates the CanvasInput primitive end-to-end._"
+                )
+            await workflows_mistralai.send_assistant_message("\n".join(ack_lines))
+        except asyncio.TimeoutError:
+            logger.info("workflow: canvas feedback timeout (90s) — no edits provided, finishing")
+        except Exception as e:  # noqa: BLE001
+            # CanvasInput unsupported on this runtime / surface — log
+            # and continue. The report still renders; only the
+            # human-in-the-loop affordance is missing.
+            logger.info(
+                "workflow: canvas feedback skipped (%s) — finishing without refinement loop",
+                type(e).__name__,
+            )
 
         return workflows_mistralai.ChatAssistantWorkflowOutput(content=output_chunks)
