@@ -18,6 +18,7 @@ Per docs/architecture.md, the structure is:
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -108,8 +109,6 @@ def _format_example_output_md(raw: str) -> str:
     ast.literal_eval and pretty-print as JSON when possible, fall back
     to the raw string in a generic code block on parse failure.
     """
-    import ast
-
     stripped = raw.strip()
     if stripped.startswith("{") and stripped.endswith("}"):
         try:
