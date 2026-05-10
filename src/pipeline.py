@@ -123,7 +123,7 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
     log.info("retrieved %d precedents", len(retrieved.items))
 
     # Step 3 — Generate candidates
-    log.info("=== Step 3: Generate 12 candidates ===")
+    log.info("=== Step 3: Generate candidates ===")
     bundle = await gather_bundle_for_company(params.company_name, params.research_depth)
     batch, ledger = await generate_candidates_activity(
         ctx, retrieved, params.focus_area.value, True, raw_bundle=bundle, ledger=ledger

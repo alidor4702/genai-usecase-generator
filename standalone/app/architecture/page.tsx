@@ -22,17 +22,17 @@ import SiteNav from "../components/SiteNav";
 
 const LEDGER_MERMAID = `
 flowchart LR
-  W[Wikipedia summary] --> L((Evidence Ledger))
-  N[News deep-read] --> L
-  J[Career pages] --> L
-  E[Existing initiatives] --> L
-  G[Generation web_search results] --> L
-  V[Per-candidate verification deep-reads] --> L
-  S[Verifier supporting_snippets] --> L
-  R[Web-verify rescue Tavily hits] --> L
-  L --> Polish[Polish reads pool excerpts]
-  L --> MetaEval[Meta-eval verifies claims]
-  L --> Judge[Judge re-reads cited sources]
+  W["Wikipedia<br/>summary"] --> L((Evidence<br/>Ledger))
+  N["News<br/>deep-read"] --> L
+  J["Career<br/>pages"] --> L
+  E["Existing<br/>initiatives"] --> L
+  G["Generation<br/>web_search<br/>results"] --> L
+  V["Per-candidate<br/>verification<br/>deep-reads"] --> L
+  S["Verifier<br/>supporting<br/>snippets"] --> L
+  R["Web-verify<br/>rescue<br/>Tavily hits"] --> L
+  L --> Polish["Polish<br/>reads pool<br/>excerpts"]
+  L --> MetaEval["Meta-eval<br/>verifies<br/>claims"]
+  L --> Judge["Judge<br/>re-reads<br/>cited sources"]
 
   classDef src fill:#1e3a8a,stroke:#60a5fa,color:#dbeafe,stroke-width:1.5px
   classDef ledger fill:#fa552e,stroke:#fdba8c,color:#fff,stroke-width:2px
@@ -44,25 +44,25 @@ flowchart LR
 
 const VERIFICATION_CHAIN_MERMAID = `
 flowchart TD
-  C[Substantive claim] --> Pool{Anchored in<br/>evidence pool?}
-  Pool -- yes --> Pass1[supported<br/>source_kind=evidence:ev-id]
-  Pool -- no --> WV[7c. Web-verify Tavily]
-  WV --> Tier{Domain credibility}
-  Tier -- "allowlisted (Reuters/FT/.gov...)" --> V1[supported<br/>rescue_tier=verified]
-  Tier -- "non-allowlist + entity/number anchor" --> V2[supported<br/>rescue_tier=corroborated]
-  Tier -- nothing --> Fail[unsupported]
-  V1 --> Judge{7d. Source-judge<br/>v9 self-correcting<br/>3 verdicts}
+  C["Substantive<br/>claim"] --> Pool{"Anchored in<br/>evidence pool?"}
+  Pool -- yes --> Pass1["supported<br/>source_kind=<br/>evidence:ev-id"]
+  Pool -- no --> WV["7c. Web-verify<br/>Tavily"]
+  WV --> Tier{"Domain<br/>credibility"}
+  Tier -- "allowlisted<br/>(Reuters / FT / .gov)" --> V1["supported<br/>rescue_tier=<br/>verified"]
+  Tier -- "non-allowlist<br/>+ entity / number" --> V2["supported<br/>rescue_tier=<br/>corroborated"]
+  Tier -- nothing --> Fail["unsupported"]
+  V1 --> Judge{"7d. Source-judge<br/>v9 self-correcting<br/>3 verdicts"}
   V2 --> Judge
   Pass1 --> Judge
-  Judge -- supported --> Final[Render with citation]
-  Judge -- "corrected (numeric/rank/temporal)" --> Patch[Patch prose inline<br/>with source value]
-  Judge -- "unsupported (judge_rejected)" --> FailJ[unsupported]
+  Judge -- supported --> Final["Render<br/>with citation"]
+  Judge -- "corrected<br/>(numeric / rank /<br/>temporal)" --> Patch["Patch prose<br/>inline with<br/>source value"]
+  Judge -- "unsupported<br/>(judge_rejected)" --> FailJ["unsupported"]
   Patch --> Final
-  Fail --> FQ[7e. Final qualify<br/>surgical rewrite]
+  Fail --> FQ["7e. Final qualify<br/>surgical rewrite"]
   FailJ --> FQ
   FQ --> Final
-  Final --> DB[("SQLite runs table")]
-  DB --> History["History page replay"]
+  Final --> DB[("SQLite<br/>runs table")]
+  DB --> History["History<br/>page replay"]
 
   classDef ok fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1.5px
   classDef fail fill:#7c2d12,stroke:#fa552e,color:#fed7aa,stroke-width:1.5px
@@ -77,7 +77,7 @@ flowchart TD
 const MODELS = [
   { step: "Research synthesis", model: "mistral-medium-2604", temp: "0.2", note: "Dense extraction over parallel signals" },
   { step: "Industry label polish", model: "mistral-small-2603", temp: "0.1", note: "Customer-facing label, breadth-preserving" },
-  { step: "Generation", model: "mistral-medium-2604", temp: "0.7", note: "12 candidates, ≥3 novel" },
+  { step: "Generation", model: "mistral-medium-2604", temp: "0.7", note: "8 candidates (configurable), ≥3 novel" },
   { step: "Scoring", model: "mistral-small-2603", temp: "0.2 → 0.4", note: "Self-consistency, two passes" },
   { step: "Per-candidate verification", model: "mistral-small-2603", temp: "0.1", note: "Tavily + duplicate-detection + grounding extraction" },
   { step: "Selection + enrichment", model: "mistral-large-2512", temp: "0.4", note: "Customer-ready prose" },

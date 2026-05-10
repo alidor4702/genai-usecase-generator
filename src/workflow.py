@@ -12,7 +12,7 @@ The workflow:
   Step 1 — research (parallel sub-tasks + synthesis)
   Confidence gate — graceful refusal if confidence too low and unverified
   Step 2 — retrieve top-k peer precedents
-  Step 3 — generate 12 candidates (with one diversity-regen if needed)
+  Step 3 — generate N candidates (default N=8, with one diversity-regen if needed)
   Step 4 — score with self-consistency
   Step 5 — per-candidate verification of top-3
   Step 6 — selection + enrichment (top-3 final)
@@ -320,7 +320,7 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         self.progress_percent = 35.0
         async with workflows.task_from(
             state=workflows_mistralai.ChatAssistantWorkingTask(
-                title="Generating 12 candidate use cases",
+                title="Generating candidate use cases",
                 content="Mistral Medium drafting use cases grounded in the company's data + priorities",
             )
         ) as task:

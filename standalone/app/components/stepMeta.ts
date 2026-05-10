@@ -18,7 +18,7 @@ export type PhaseKey =
 export const PHASES: { key: PhaseKey; label: string; sub: string }[] = [
   { key: "research", label: "Research", sub: "fetching company signal" },
   { key: "retrieve", label: "Retrieve", sub: "finding peer precedents" },
-  { key: "generate", label: "Generate", sub: "drafting 12 candidates" },
+  { key: "generate", label: "Generate", sub: "drafting 8 candidates" },
   { key: "score",    label: "Score",    sub: "rating against 5 criteria" },
   { key: "verify",   label: "Verify",   sub: "checking top-3 against the live web" },
   { key: "enrich",   label: "Enrich",   sub: "polishing customer-ready prose" },
@@ -67,7 +67,7 @@ export const STEP_DISPLAY: Record<
   },
   generate: {
     title: "Generating candidates",
-    verb: "Brainstorming 12 candidate use cases with the company's data + priorities + precedents",
+    verb: "Brainstorming 8 candidate use cases with the company's data + priorities + precedents",
     tone: "from-emerald-500/30 to-emerald-500/0",
   },
   "generate.web_search": {
@@ -77,7 +77,7 @@ export const STEP_DISPLAY: Record<
   },
   score: {
     title: "Scoring against 5 criteria",
-    verb: "Self-consistency: rating 12 candidates × 5 criteria across 2 parallel passes",
+    verb: "Self-consistency: rating 8 candidates × 5 criteria across 2 parallel passes",
     tone: "from-amber-500/30 to-amber-500/0",
   },
   verify: {

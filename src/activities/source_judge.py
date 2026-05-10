@@ -196,7 +196,7 @@ async def _judge_one(
         ) as ev:
             r = await client.chat.complete_async(
                 model=settings.mistral_scoring_model,
-                temperature=0.1,
+                temperature=0.05 if settings.tier.value == "max" else 0.1,
                 max_tokens=400,
                 timeout_ms=20_000,
                 response_format={"type": "json_object"},

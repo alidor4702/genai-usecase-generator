@@ -32,6 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from src.config import Tier, settings
 from src.models import (
     CriteriaWeights,
     FocusArea,
@@ -58,6 +59,12 @@ class GenerateRequest(BaseModel):
     focus_area: FocusArea = FocusArea.GENERAL
     weights: CriteriaWeights | None = None
     research_depth: ResearchDepth = ResearchDepth.MEDIUM
+    # Per-request tier override. None = use the server's default tier
+    # (settings.tier). Per-run override is applied in the background
+    # task wrapper; concurrent runs with different tiers will race
+    # against the global settings singleton — fine for the take-home's
+    # single-user usage, would migrate to a context-var in production.
+    tier: Tier | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -166,9 +173,17 @@ async def generate(req: GenerateRequest) -> GenerateResponse:
         weights=req.weights or CriteriaWeights(),
         research_depth=req.research_depth,
     )
+    # Per-request tier override is applied to the global settings
+    # singleton for the duration of this run. Concurrent runs with
+    # different tiers will race; for the take-home's single-user usage
+    # this is acceptable. Production would migrate to a context-var so
+    # each in-flight request carries its own tier independently.
+    if req.tier is not None and req.tier != settings.tier:
+        logger.info("api: run %s overriding tier %s → %s", run_id, settings.tier.value, req.tier.value)
+        settings.tier = req.tier
     _runs[run_id] = RunState(run_id, params)
     asyncio.create_task(_execute_run(run_id))
-    logger.info("api: queued run %s for %s", run_id, params.company_name)
+    logger.info("api: queued run %s for %s (tier=%s)", run_id, params.company_name, settings.tier.value)
     return GenerateResponse(run_id=run_id, status="queued")
 
 

@@ -62,10 +62,22 @@ async def _deep_read_body(http: httpx.AsyncClient, url: str) -> str:
 
 logger = logging.getLogger(__name__)
 
-# Hard caps to keep cost bounded.
-_MAX_RESCUE_SEARCHES_PER_RUN = 12
+# Hard caps to keep cost bounded. Max tier bumps the rescue cap to give
+# claim-dense reports more headroom; only fires when there's actually
+# that many unsupported claims, so most runs don't hit it.
+_MAX_RESCUE_SEARCHES_STANDARD = 12
+_MAX_RESCUE_SEARCHES_MAX_TIER = 18
 _TAVILY_CONCURRENCY = 3
 _TAVILY_TOP_K = 4
+
+
+def _rescue_cap() -> int:
+    from src.config import settings
+    return (
+        _MAX_RESCUE_SEARCHES_MAX_TIER
+        if settings.tier.value == "max"
+        else _MAX_RESCUE_SEARCHES_STANDARD
+    )
 
 
 async def _rescue_one_claim(
@@ -172,7 +184,7 @@ async def web_verify_unsupported_claims_activity(
     """Promote unsupported-but-real claims via Tavily + two-tier credibility.
 
     Runs AFTER `meta_evaluate_activity`. Hard-capped at
-    `_MAX_RESCUE_SEARCHES_PER_RUN` Tavily calls. Returns updated review
+    `_rescue_cap()` Tavily calls (12 standard, 18 on max tier). Returns updated review
     (confidence bumped if recall improved meaningfully), updated claims
     list, and updated ledger with new CLAIM_VERIFICATION entries.
 
@@ -189,13 +201,15 @@ async def web_verify_unsupported_claims_activity(
         logger.info("web_verify: no unsupported claims to rescue")
         return review, claims, ledger
 
-    # Cap to budget.
-    capped = unsupported_idxs[:_MAX_RESCUE_SEARCHES_PER_RUN]
+    # Cap to budget — max tier gets a higher cap (18 vs 12) for
+    # claim-dense reports.
+    cap = _rescue_cap()
+    capped = unsupported_idxs[:cap]
     skipped = len(unsupported_idxs) - len(capped)
     if skipped:
         logger.warning(
             "web_verify: %d unsupported claims, capping rescue at %d (budget)",
-            len(unsupported_idxs), _MAX_RESCUE_SEARCHES_PER_RUN,
+            len(unsupported_idxs), cap,
         )
 
     tavily = AsyncTavilyClient(api_key=settings.tavily_api_key)
@@ -205,7 +219,7 @@ async def web_verify_unsupported_claims_activity(
         "web_verify",
         "tavily.search",
         "rescue_unsupported_claims",
-        inputs_summary=f"company={company_name!r} unsupported={len(capped)} budget={_MAX_RESCUE_SEARCHES_PER_RUN}",
+        inputs_summary=f"company={company_name!r} unsupported={len(capped)} budget={cap}",
     ) as ev:
         async with httpx.AsyncClient(headers={"User-Agent": settings.user_agent}, timeout=20.0) as http:
             tasks = [_rescue_one_claim(claims[i], company_name, tavily, http, sem) for i in capped]

@@ -41,12 +41,12 @@ const PHASES: Phase[] = [
   },
   {
     step: "generate",
-    title: "3. Brainstorm 12 ideas",
+    title: "3. Brainstorm 8 candidate ideas",
     oneLine: "Draft a wide pool, not a polished three.",
     body:
-      "A generation model writes 12 candidate use cases. At least three are required to be NOVEL — not adaptations of any single precedent, but combinations or original directions. Each candidate cites which company-specific facts make it relevant. The model can run live web searches mid-draft when it needs more grounding.",
+      "A generation model writes 8 candidate use cases (the size is configurable, but 8 is the v9.3 default — Phase 3 benchmarks showed top-3 selectivity holds at 8). At least three are required to be NOVEL — not adaptations of any single precedent, but combinations or original directions. Each candidate cites which company-specific facts make it relevant. The model can run live web searches mid-draft when it needs more grounding.",
     reads: ["Company profile", "Peer precedents", "Hand-curated examples", "Live web (when needed)"],
-    produces: ["12 candidates with reasoning"],
+    produces: ["8 candidates with reasoning"],
   },
   {
     step: "score",
@@ -54,7 +54,7 @@ const PHASES: Phase[] = [
     oneLine: "Rate each idea on relevance, impact, feasibility, distinctiveness, and Mistral fit.",
     body:
       "Every candidate gets five scores from a calibrated rubric: how relevant is it to a core workflow at scale, how iconic and distinctive is it for THIS company specifically, how impactful is it for them, how feasible to ship in a typical engagement timeline, and how well does it lean into Mistral's strengths. To stay calibrated, the scoring runs twice with slightly different randomness and merges results.",
-    reads: ["12 candidates", "Five scoring criteria"],
+    reads: ["8 candidates", "Five scoring criteria"],
     produces: ["Aggregate score per candidate"],
   },
   {

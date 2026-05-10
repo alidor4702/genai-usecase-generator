@@ -10,10 +10,7 @@
 [![Mistral Workflows](https://img.shields.io/badge/runtime-Mistral_Workflows-fa552e)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
 
-<!-- IMAGE PLACEHOLDER:
-     Hero screenshot of the Compastral landing page (animated 8-bit
-     compass + typewriter "Compastral"). Save as docs/img/landing.png.
--->
+![Compastral landing page — interactive 8-bit pixel compass + typewriter wordmark](docs/img/landing.png)
 
 ---
 
@@ -55,19 +52,11 @@ For Carrefour (v9.1, latest batch in [`docs/examples/v9_1/`](docs/examples/v9_1)
   3. *Supplier-ESG risk-scoring agent on Carrefour's 50k-supplier base*
 - Each with: refined description, why-this-company, example user query + system output, blueprint mermaid (color-coded by pattern), TTV estimate (precedent-anchored or honestly tagged "ballpark"), top implementation risk, Mistral product picks, citations linked to a per-run grounding database.
 
-<!-- IMAGE PLACEHOLDER:
-     Screenshot of a use case card on the Generate page showing the
-     blueprint mermaid + tier chips + grounding citations.
-     Save as docs/img/use-case-card.png.
--->
+![Generate page — Mistral cat-M crest above the input panel, focus area selector, advanced criteria weights](docs/img/generate.png)
 
 ## The system at a glance
 
-<!-- IMAGE PLACEHOLDER:
-     Architecture diagram screenshot from the /architecture page
-     showing the 14-step pipeline left-to-right with classDef colors.
-     Save as docs/img/pipeline-diagram.png.
--->
+![Pipeline diagram — five phase bands stacked top-to-bottom, each phase flowing left-to-right with role-coded cards (LLM, live web, preset corpus, I/O)](docs/img/pipeline-diagram.png)
 
 ```
 Company name + knobs
@@ -75,7 +64,7 @@ Company name + knobs
    1. Research (Wikipedia + news + jobs + existing AI initiatives)
    1b. Gap-fill targeted Tavily searches
    2. Retrieve top-k peer precedents (cosine over 2,150 corpus)
-   3. Generate 12 candidates (Mistral Medium + web_search tool, ≥3 novel)
+   3. Generate 8 candidates (Mistral Medium + web_search tool, ≥3 novel) [configurable, was 12 pre-v9.3]
    4. Score against 5 criteria (Mistral Small × 2 self-consistency)
    5. Verify top-3 via Tavily + duplicate-detection + supporting-snippet extraction
    6. Select + enrich top-3 (Mistral Large 3, customer-ready prose)
@@ -243,6 +232,8 @@ SQLite schema (runs table):
 ```
 
 Auto-saves in the FastAPI background-task `finally:` block (best-effort — a persistence failure doesn't mask the actual run outcome).
+
+> **Render free-tier caveat:** the live deployment uses a free Render web service. The free tier wipes its filesystem on every cold start (the service spins down after ~15 min idle), so the SQLite `runs` table resets to empty between sessions. **Runs older than the most recent warm-up window will not appear on `/history`.** Production migration paths: Render Starter ($7/mo, service stays warm), Render's Persistent Disk add-on (~$1/mo for 1GB), or Postgres on Render's free tier (per `docs/architecture.md` "Production migration path"). For local CLI use the SQLite at `data/genai_usecases.db` is durable.
 
 ## Grounding explorer
 

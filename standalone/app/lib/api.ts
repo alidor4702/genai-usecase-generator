@@ -12,11 +12,14 @@ export type CriteriaWeights = {
   mistral_suitability: number;
 };
 
+export type Tier = "fast" | "standard" | "max";
+
 export type GenerateRequest = {
   company_name: string;
   focus_area: FocusArea;
   weights?: CriteriaWeights;
   research_depth: ResearchDepth;
+  tier?: Tier;
 };
 
 export type StatusResponse = {

@@ -69,13 +69,14 @@ async def _deep_read_top(http: httpx.AsyncClient, urls: list[str]) -> list[tuple
     wall clock. asyncio.gather brings the deep-read step from sum-of-fetches
     down to max-of-fetches.
 
-    Tier dispatch: max tier reads the top 3 sources per candidate (more
-    grounding density at the cost of an extra HTTP fetch); standard / fast
-    stay at 2 (the configured `tavily_deep_read_top_n`).
+    Tier dispatch: max tier reads the top 5 sources per candidate (much
+    more grounding density at the cost of 2-3 extra HTTP fetches per
+    candidate); standard / fast stay at 2 (the configured
+    `tavily_deep_read_top_n`).
     """
     top_n = settings.tavily_deep_read_top_n
     if settings.tier.value == "max":
-        top_n = max(top_n, 3)
+        top_n = max(top_n, 5)
     targets = urls[:top_n]
 
     async def _one(url: str) -> tuple[str, str] | None:

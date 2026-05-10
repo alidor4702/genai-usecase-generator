@@ -154,11 +154,17 @@ def _build_user_message(
             if prev_diversity_score is not None
             else ""
         )
+    sections.append("\n# Generation budget")
+    sections.append(
+        f"Generate EXACTLY {settings.candidates_to_generate} candidates. "
+        f"At least 3 must be `novelty: novel_direction` per the hard rules."
+    )
     sections.append("\n# Task")
     sections.append(
-        f"Generate exactly 12 candidate use cases for {ctx.identity.name} "
-        f"following ALL hard rules in the system prompt. Return strict JSON "
-        f"matching the CandidateBatch schema."
+        f"Generate exactly {settings.candidates_to_generate} candidate use "
+        f"cases for {ctx.identity.name} following ALL hard rules in the "
+        f"system prompt. Return strict JSON matching the CandidateBatch "
+        f"schema."
     )
     return "\n".join(sections)
 

@@ -32,7 +32,7 @@ flowchart TD
     Retrieve[Step 2: Retrieve precedents<br/>top-k from corpus<br/>excluding target company<br/>+ optional MMR diversification]
     Retrieve --> Generate
 
-    Generate[Step 3: Generate 12 candidates<br/>with few-shot + criteria + precedents<br/>+ existing initiatives forbidden list<br/>+ novelty bias - 3 of 12 must be novel<br/>+ output diversity check]
+    Generate[Step 3: Generate 8 candidates<br/>with few-shot + criteria + precedents<br/>+ existing initiatives forbidden list<br/>+ novelty bias - 3 must be novel<br/>+ output diversity check]
     Generate --> Score
 
     Score[Step 4: Score against 5 criteria<br/>self-consistency averaging<br/>iconic hard-gate on duplicates]
@@ -117,7 +117,9 @@ The Mistral Workflows SDK provides four primitives for interacting with running 
 
 ### Queries (used)
 
-`@workflow.query` exposes read-only state to external clients. We use this for the standalone web app to poll workflow progress: which step is currently running, which TodoListItem is active, what the current confidence score is. The query handler is synchronous and side-effect-free, returning a snapshot of internal state.
+`@workflow.query` exposes read-only state to external clients. The standalone web app polls workflow progress: which step is currently running (e.g. `research`, `generate`, `meta_evaluate`), what the current progress percentage is. The query handler is synchronous and side-effect-free, returning a snapshot of internal state.
+
+> **Note:** earlier drafts described a `TodoListItem` in this query. We tested both the SDK's `TodoList` primitive (renders as a sidebar checklist) and per-phase `ChatAssistantWorkingTask` blocks (render as inline thinking indicators in the chat), and shipped the latter — TodoList rendered in a different surface than where the user expects pipeline progress. The query exposes `current_step` directly; the FE maps it to a per-phase progress bar.
 
 ```python
 @workflows.workflow.query(name="get_status", description="Get current workflow progress")
@@ -191,18 +193,18 @@ A single LLM call (Mistral Medium 3.5, T=0.7) takes:
 - 1-2 hand-curated few-shot examples of high-quality outputs for other companies (the single highest-impact technique for output quality)
 - The retrieved peer precedents (formatted as labeled examples)
 
-It generates 12 candidate use cases with structured Pydantic output. The schema includes title, description, why-this-company, estimated impact, suggested Mistral products, plus the provenance fields (`inspired_by`, `grounded_in`).
+It generates 8 candidate use cases with structured Pydantic output (was 12 pre-v9.3; see `candidates_to_generate` in `src/config.py` for the configurable knob and `docs/benchmarks/findings.md` for the analysis that justified the cut). The schema includes title, description, why-this-company, estimated impact, suggested Mistral products, plus the provenance fields (`inspired_by`, `grounded_in`).
 
 The prompt enforces two key constraints:
 
 1. **No proposals that substantially duplicate existing initiatives** in the company context. Building on or extending an existing initiative is allowed if labeled clearly; substantially duplicating it is not.
-2. **Novelty bias.** At least 3 of the 12 candidates must be novel directions — extensions, combinations, or original framings that aren't direct adaptations of any single precedent. Precedents are evidence of what's feasible, not templates to copy.
+2. **Novelty bias.** At least 3 of the candidates must be novel directions — extensions, combinations, or original framings that aren't direct adaptations of any single precedent. Precedents are evidence of what's feasible, not templates to copy.
 
-12 candidates beats 3 directly because the scoring step needs options. Generating only 3 means the scorer has nothing to filter; the generator's first three guesses are not always its best three.
+8 candidates beats 3 directly because the scoring step needs options to filter. Generating only 3 means the scorer has nothing to choose from; the generator's first three guesses are not always its best three. We piloted at 12 and benchmarked 5 / 8 / 12 in Phase 3a — confidence at N=5 dropped meaningfully, N=8 and N=12 were a wash, so 8 became the v9.3 default. See `docs/benchmarks/findings.md`.
 
 The prompt structure follows known LLM attention patterns: system framing first, criteria and context in the middle, generation task at the end.
 
-**Output diversity check.** After generation, a cheap cosine similarity check runs across the 12 candidate description embeddings. If average pairwise similarity is too high (the generator produced 12 variations of the same idea), the generator is re-run with an explicit "diversify your candidates more — the previous attempt was repetitive" instruction. This catches the boring-output failure mode automatically.
+**Output diversity check.** After generation, a cheap cosine similarity check runs across the candidate description embeddings. If average pairwise similarity is too high (the generator produced 12 variations of the same idea), the generator is re-run with an explicit "diversify your candidates more — the previous attempt was repetitive" instruction. This catches the boring-output failure mode automatically.
 
 #### Streaming generation (optional)
 
@@ -437,7 +439,7 @@ The same conversational workflow is exposed two ways:
 
 1. **Le Chat assistant (public).** Published publicly to Le Chat's assistants directory as "GenAI Use Case Generator". Anyone with a Le Chat account can find it by name, install it with one click, type a company name, and receive the rich UI Component output inline. The conversational checkpoint (focus area, weights) renders as Le Chat's interactive `FormInput` UI. Public publishing was a deliberate choice — it removes friction for the reviewing team and demonstrates confidence in the output quality without staging.
 
-2. **Standalone web app.** A Next.js + FastAPI thin shell that triggers the same Mistral Workflow via the Workflows API and renders the structured output. Hosted at a public URL so reviewers can use it without setup. The conversational checkpoint becomes a UI panel before generation. The app polls the workflow's `get_status` Query for live progress (which step is running, which TodoListItem is active).
+2. **Standalone web app.** A Next.js + FastAPI thin shell that triggers the same Mistral Workflow via the Workflows API and renders the structured output. Hosted at a public URL so reviewers can use it without setup. The conversational checkpoint becomes a UI panel before generation. The app polls the FastAPI `/status/{run_id}` endpoint (which mirrors the workflow's `current_step` and `progress_percent` from internal state) for live progress.
 
 The workflow logic is shared. The two surfaces differ only in how input is collected and output is rendered.
 
@@ -461,7 +463,7 @@ The workflow logic is shared. The two surfaces differ only in how input is colle
 | Step | Model | Reason |
 |---|---|---|
 | Research synthesis | Mistral Medium 3.5 (`mistral-medium-2604`) | Frontier-class for multi-source aggregation, cost-balanced |
-| Generation (12 candidates) | Mistral Medium 3.5 (`mistral-medium-2604`) | Best balance of creativity and grounding for structured output |
+| Generation (8 candidates, configurable) | Mistral Medium 3.5 (`mistral-medium-2604`) | Best balance of creativity and grounding for structured output |
 | Scoring (with self-consistency) | Mistral Small 4 (`mistral-small-2603`) | Cheap, structured, fits the rubric task; self-consistency compensates for capacity |
 | Per-candidate verification | Mistral Small 4 (`mistral-small-2603`) | Simple binary classification of search results |
 | Selection and enrichment | Mistral Large 3 (`mistral-large-2512`) | Best-in-class for customer-facing polished prose |

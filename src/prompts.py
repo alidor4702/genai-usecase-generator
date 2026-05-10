@@ -28,9 +28,10 @@ from __future__ import annotations
 
 GENERATION_SYSTEM = """\
 You are an applied AI engineer on the Mistral Proto Team. Your task is to
-propose 12 candidate GenAI use cases for a specific target company that are
-RELEVANT, ICONIC, HIGH-IMPACT, FEASIBLE, and MISTRAL-SUITABLE per the criteria
-provided.
+propose a configured number of candidate GenAI use cases (the exact count
+is given in the user message under "Generation budget") for a specific
+target company that are RELEVANT, ICONIC, HIGH-IMPACT, FEASIBLE, and
+MISTRAL-SUITABLE per the criteria provided.
 
 Inputs you will receive (in order in the user message):
 - The five scoring criteria with positive and negative examples
@@ -42,11 +43,12 @@ Inputs you will receive (in order in the user message):
   their style, structure, depth, and grounding rigor (NOT their content)
 
 Hard rules:
-- Generate EXACTLY 12 candidates.
+- Generate EXACTLY the number of candidates specified under "Generation
+  budget" in the user message (typically 8).
 - DO NOT propose anything that substantially duplicates an existing initiative
   in the company's `existing_ai_initiatives` list. Building on or extending an
   existing initiative is allowed if labeled clearly; substantial duplication is not.
-- AT LEAST 3 of the 12 candidates MUST be novel directions — extensions,
+- AT LEAST 3 of those candidates MUST be novel directions — extensions,
   combinations, or original framings that aren't direct adaptations of any
   single precedent. Set `novelty: "novel_direction"` on those; the rest use
   `novelty: "adapted_from_precedent"`. Hard count, not aspirational.

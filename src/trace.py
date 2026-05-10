@@ -124,7 +124,7 @@ class RunTrace(BaseModel):
             "    Conf -->|no| Refuse([Refusal])\n"
             "    Conf -->|yes| Ret\n"
             "    Ret[\"<b>2. Retrieve</b><br/><i>mistral-embed</i> on company query →<br/>cosine top-K + industry/depth filter +<br/>MMR diversification\"]\n"
-            "    Ret --> Gen[\"<b>3. Generate 12 candidates</b><br/><i>mistral-medium</i> with web_search tool<br/>(Tavily + deep-read) — fact citations<br/>flow into the EvidenceLedger\"]\n"
+            "    Ret --> Gen[\"<b>3. Generate candidates</b><br/><i>mistral-medium</i> with web_search tool<br/>(8 by default, configurable) — fact citations<br/>flow into the EvidenceLedger\"]\n"
             "    Gen --> Score[\"<b>4. Score</b><br/>self-consistency: 2 parallel passes<br/><i>mistral-small</i> @ T=0.2 and T=0.4 →<br/>aggregate weighted scores\"]\n"
             "    Score --> Verify[\"<b>5. Per-candidate verify</b><br/>top-3: Tavily search + deep-read +<br/><i>mistral-small</i> verdict (pass /<br/>partial / confirmed_existing)\"]\n"
             "    Verify --> Enrich[\"<b>6. Enrich</b><br/><i>mistral-large</i> drafts customer-facing<br/>prose for 3 use cases (or<br/><i>mistral-medium</i> on fast tier)\"]\n"

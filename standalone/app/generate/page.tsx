@@ -31,6 +31,7 @@ export default function Page() {
   const [companyName, setCompanyName] = useState("Carrefour");
   const [focusArea, setFocusArea] = useState<FocusArea>("general");
   const [depth, setDepth] = useState<ResearchDepth>("medium");
+  const [tier, setTier] = useState<"fast" | "standard" | "max">("standard");
   const [weights, setWeights] = useState({
     relevance: 0.2,
     iconic_potential: 0.2,
@@ -69,6 +70,7 @@ export default function Page() {
         focus_area: focusArea,
         weights,
         research_depth: depth,
+        tier,
       });
       setRunId(run_id);
       cleanupRef.current = subscribeToEvents(
@@ -153,6 +155,8 @@ export default function Page() {
             setCompanyName={setCompanyName}
             focusArea={focusArea}
             setFocusArea={setFocusArea}
+            tier={tier}
+            setTier={setTier}
             depth={depth}
             setDepth={setDepth}
             weights={weights}
@@ -245,6 +249,7 @@ function Hero({
 function FormView({
   companyName, setCompanyName,
   focusArea, setFocusArea,
+  tier, setTier,
   depth, setDepth,
   weights, setWeights,
   showAdvanced, setShowAdvanced,
@@ -252,6 +257,8 @@ function FormView({
 }: {
   companyName: string; setCompanyName: (s: string) => void;
   focusArea: FocusArea; setFocusArea: (s: FocusArea) => void;
+  tier: "fast" | "standard" | "max";
+  setTier: (s: "fast" | "standard" | "max") => void;
   depth: ResearchDepth; setDepth: (s: ResearchDepth) => void;
   weights: { relevance: number; iconic_potential: number; estimated_impact: number; feasibility: number; mistral_suitability: number };
   setWeights: (s: { relevance: number; iconic_potential: number; estimated_impact: number; feasibility: number; mistral_suitability: number }) => void;
@@ -357,9 +364,67 @@ function FormView({
       </div>
 
       <div className="relative">
+        <span className="text-[11px] uppercase tracking-[0.18em] text-mistral-orangeBright font-bold">
+          Step 3 · Performance tier
+        </span>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {([
+            {
+              value: "fast" as const,
+              label: "Fast",
+              speed: "~125s",
+              detail: "Mistral Medium for prose, no polish/attribution. Phase 3 benchmark: equal-or-better confidence on Carrefour.",
+            },
+            {
+              value: "standard" as const,
+              label: "Standard",
+              speed: "~215s",
+              detail: "Default. Mistral Large 3 for prose, full guardrails, web_search budget 2.",
+            },
+            {
+              value: "max" as const,
+              label: "Max",
+              speed: "~225s",
+              detail: "More grounding: web_search 4, deep-read top-5, judge T=0.05, rescue cap 18.",
+            },
+          ]).map((o) => {
+            const active = tier === o.value;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setTier(o.value)}
+                className={`text-left p-3 rounded-xl border-2 transition-all ${
+                  active
+                    ? "border-mistral-orange bg-mistral-orange/10 shadow-lg shadow-mistral-orange/10"
+                    : "border-mistral-border hover:border-mistral-orange/40 bg-mistral-dark/40"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 text-sm font-semibold text-white">
+                  <span className="flex items-center gap-2">
+                    <span
+                      className={`w-1.5 h-4 rounded-sm transition-colors ${
+                        active ? "bg-mistral-orange" : "bg-mistral-border"
+                      }`}
+                      aria-hidden
+                    />
+                    {o.label}
+                  </span>
+                  <span className="text-[10px] font-mono text-mistral-orangeBright">{o.speed}</span>
+                </div>
+                <div className="text-[11px] text-ink-secondary mt-1 ml-3.5 leading-snug">
+                  {o.detail}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="relative">
         <label className="block">
           <span className="text-[11px] uppercase tracking-[0.18em] text-mistral-orangeBright font-bold">
-            Step 3 · Research depth
+            Step 4 · Research depth
           </span>
           <select
             value={depth}
