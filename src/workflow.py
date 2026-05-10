@@ -61,6 +61,10 @@ with _temporal_workflow.unsafe.imports_passed_through():
     from src.activities.select_enrich import select_and_enrich_activity
     from src.activities.source_judge import judge_claim_sources_activity
     from src.activities.verify_per_candidate import verify_top_candidates_activity
+    from src.activities.refine_use_case import (
+        parse_use_case_index,
+        refine_use_case_activity,
+    )
     from src.activities.web_verify import web_verify_unsupported_claims_activity
     from src.config import settings
     from src.ui.le_chat_components import build_report_component_tree
@@ -551,24 +555,71 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             )
             logger.info("workflow: canvas feedback received — %s", feedback_text)
 
-            # Acknowledge the feedback. A v2 of this would parse the
-            # edits, identify which use case was touched, and trigger
-            # a targeted regen via select_and_enrich_activity. For
-            # now we surface the human-in-the-loop primitive working
-            # end-to-end — the parsing + regen wiring is documented
-            # as a planned enhancement in architecture.md.
-            ack_lines = [
-                f"Got your feedback for **{company_name}** — thanks.",
-            ]
-            if chat_msg:
-                ack_lines.append(f"\n**Your note:** {chat_msg}")
-            if edited_content:
-                ack_lines.append(
-                    f"\n_Canvas edit captured ({len(edited_content)} chars). "
-                    f"Targeted regen wiring is documented as a planned enhancement; "
-                    f"this run demonstrates the CanvasInput primitive end-to-end._"
+            # Identify which use case the user wants refined. We parse
+            # both the chat message and the edited canvas for ordinal
+            # / numeric clues ("use case 2", "the second one", etc.).
+            # If we can't pin one down, pick use case 1 as the safest
+            # default to demonstrate the loop.
+            use_case_chunks = (chunks or {}).get("use_cases") or []
+            target_idx = parse_use_case_index(
+                chat_msg, edited_content, len(use_case_chunks) or 3
+            )
+            if target_idx is None:
+                target_idx = 0  # default to first use case
+
+            target_uc = (
+                use_case_chunks[target_idx]
+                if isinstance(use_case_chunks, list) and 0 <= target_idx < len(use_case_chunks)
+                else None
+            )
+            if target_uc is None or not isinstance(target_uc, dict):
+                # Nothing to refine — acknowledge politely and exit.
+                await workflows_mistralai.send_assistant_message(
+                    f"Got your feedback for **{company_name}** but couldn't find a "
+                    f"matching use case to refine. Try mentioning the use case number "
+                    f"(e.g. \"use case 2 should focus more on ...\") next time."
                 )
-            await workflows_mistralai.send_assistant_message("\n".join(ack_lines))
+            else:
+                target_title = str(target_uc.get("title", f"Use case {target_idx + 1}"))
+                target_body = str(target_uc.get("body_md", ""))
+                logger.info(
+                    "workflow: refining use case %d (%r) per user feedback",
+                    target_idx + 1,
+                    target_title,
+                )
+                await workflows_mistralai.send_assistant_message(
+                    f"Got your feedback — refining **use case {target_idx + 1}: "
+                    f"{target_title}**. One moment…"
+                )
+
+                # Run the refinement activity (single LLM call, ≤90s).
+                refined_md = await refine_use_case_activity(
+                    target_body,
+                    edited_content,
+                    chat_msg,
+                    company_name,
+                )
+
+                # Ship the refined version as a new markdown canvas.
+                refined_canvas = workflows_mistralai.CanvasResource(
+                    canvas=workflows_mistralai.CanvasPayload(
+                        type="text/markdown",
+                        title=f"Refined · use case {target_idx + 1} — {target_title}",
+                        content=refined_md,
+                    ),
+                )
+                await workflows_mistralai.send_assistant_message(
+                    [
+                        workflows_mistralai.TextOutput(
+                            text=(
+                                f"Here's a refined version of use case "
+                                f"{target_idx + 1} — incorporating your feedback. "
+                                f"Open the canvas below."
+                            )
+                        ),
+                        workflows_mistralai.ResourceOutput(resource=refined_canvas),
+                    ]
+                )
         except asyncio.TimeoutError:
             logger.info("workflow: canvas feedback timeout (90s) — no edits provided, finishing")
         except Exception as e:  # noqa: BLE001

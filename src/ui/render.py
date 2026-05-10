@@ -36,9 +36,43 @@ from src.models import (
 logger = logging.getLogger(__name__)
 
 
+_LONG_NODE_LABEL_RX = re.compile(
+    r'(\[(?:[("/\\]?)\s*(?:"([^"]+)"|([^\]"\n]{31,}?))\s*([)"/\\]?)\])',
+)
+
+
+def _truncate_long_mermaid_labels(s: str) -> str:
+    """Safety net: cap any node label longer than 30 chars at 30 chars
+    plus an ellipsis. The generation prompt instructs the model to keep
+    labels short, but the LLM occasionally produces labels like
+    `User: Hand Gestures / Eye-tracking input capture` that overflow
+    the box in Le Chat / canvas renders. This regex finds bracketed
+    node labels (square brackets with optional shape modifiers like
+    `[(`, `["`, `[/`) and shortens the label content.
+    """
+    def _shrink(match: re.Match[str]) -> str:
+        # Reconstruct: keep the bracket shape, shorten only the label.
+        full = match.group(0)
+        # Quoted variant: [(...)], ["..."]
+        quoted = match.group(2)
+        bare = match.group(3)
+        label = quoted if quoted is not None else bare
+        if not label or len(label) <= 30:
+            return full
+        short = label[:27].rstrip() + "…"
+        # Re-wrap exactly as it was found.
+        if quoted is not None:
+            return full.replace(f'"{label}"', f'"{short}"', 1)
+        return full.replace(label, short, 1)
+
+    return _LONG_NODE_LABEL_RX.sub(_shrink, s)
+
+
 def _clean_mermaid(s: str) -> str:
     """Strip leading ```mermaid / ``` and trailing ``` so the renderer can
-    wrap the body without producing a double-fenced code block."""
+    wrap the body without producing a double-fenced code block. Also
+    truncates over-long node labels (≤30 chars) to keep them inside
+    their boxes on Le Chat / canvas renders."""
     s = (s or "").strip()
     for prefix in ("```mermaid", "```Mermaid", "```"):
         if s.startswith(prefix):
@@ -46,7 +80,7 @@ def _clean_mermaid(s: str) -> str:
             break
     if s.endswith("```"):
         s = s[:-3].rstrip()
-    return s.strip()
+    return _truncate_long_mermaid_labels(s.strip())
 
 
 # Blueprint pattern → categorical color mapping for mermaid rendering.
@@ -114,10 +148,47 @@ def _format_example_output_md(raw: str) -> str:
         try:
             parsed = ast.literal_eval(stripped)
             pretty = json.dumps(parsed, indent=2, ensure_ascii=False)
+            # Wrap any line longer than 80 chars (typically a long
+            # string value) onto its own continuation lines so the
+            # code block doesn't horizontally overflow the canvas /
+            # markdown container. Le Chat + most markdown renderers
+            # don't wrap inside <pre>; this keeps lines short.
+            pretty = _wrap_json_lines(pretty, max_width=80)
             return f"**Example output:**\n```json\n{pretty}\n```"
         except (ValueError, SyntaxError):
             pass
     return f"**Example output:**\n```\n{stripped}\n```"
+
+
+def _wrap_json_lines(s: str, *, max_width: int = 80) -> str:
+    """Soft-wrap any line longer than `max_width` chars by breaking
+    long string values across lines. JSON is forgiving about whitespace
+    inside string literals when re-displayed visually, so we just
+    insert newlines + leading indent that mimics the existing indent.
+    The line stays a string from the parser's perspective when read
+    back in but the rendered code block fits.
+    """
+    out: list[str] = []
+    for line in s.split("\n"):
+        if len(line) <= max_width:
+            out.append(line)
+            continue
+        # Compute leading indent (preserve it on continuation lines).
+        leading_ws = len(line) - len(line.lstrip(" "))
+        indent = " " * (leading_ws + 2)
+        # Break on word boundaries every ~max_width chars.
+        chunks: list[str] = []
+        current = line
+        while len(current) > max_width:
+            # Find last space before max_width
+            cut = current.rfind(" ", 0, max_width)
+            if cut <= leading_ws + 4:  # no good word boundary; hard cut
+                cut = max_width
+            chunks.append(current[:cut].rstrip())
+            current = indent + current[cut:].lstrip()
+        chunks.append(current)
+        out.extend(chunks)
+    return "\n".join(out)
 
 
 def _format_use_case_md(
@@ -236,7 +307,7 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
         failed = [c for c in in_scope if not c.passed]
         rewritten = [c for c in signals.fact_check if c.qualified_out]
         lines.append("")
-        lines.append("<details><summary>Fact-check detail (per claim)</summary>")
+        lines.append("### Fact-check detail (per claim)")
         lines.append("")
         if failed:
             lines.append(f"**Unsupported ({len(failed)}):**")
@@ -304,7 +375,10 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
                     f"- [{c.use_case_id}] {c.claim}{tier_badge}{(' — ' + src) if src else ''}"
                 )
             lines.append("")
-        lines.append("</details>")
+        # (no closing tag — replaced the <details> block with a plain
+        # markdown ### heading so Le Chat canvas + react-markdown
+        # render it consistently. HTML <details> doesn't work in
+        # either surface without rehype-raw.)
     if meta is not None:
         lines.append("")
         lines.append(

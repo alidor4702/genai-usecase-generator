@@ -311,7 +311,12 @@ For each use case, produce:
 - `blueprint_pattern`: one of {rag, agent_with_tools, document_ai_pipeline,
   fine_tuned_domain, hybrid_retrieval}
 - `blueprint_mermaid`: a small mermaid sketch (one architecture flow, not a
-  full essay — 5-10 nodes max)
+  full essay — 5-10 nodes max). EVERY NODE LABEL MUST BE ≤30 characters.
+  Long labels render with their text cut off in chat surfaces — keep
+  labels concise. If a step needs more context, use abbreviations
+  (e.g. "Eye-tracking input" not "User: Hand Gestures/Eye Tracking
+  Input Capture"). Mermaid labels are NOT the place for full prose;
+  put detail in `description` and `why_this_company` instead.
 - `time_to_value`: produce a structured object with three rules:
     Option A (preferred) — `basis: "precedent"`. Anchor to ≥1 peer
       precedent: `{"estimate": "8-16 weeks", "anchored_to": ["<precedent_id>"],

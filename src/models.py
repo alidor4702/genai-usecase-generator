@@ -124,16 +124,13 @@ class WorkflowInput(BaseModel):
     """Top-level input to GenAIUseCaseWorkflow.
 
     Le Chat auto-renders this schema as the workflow's entry form on
-    the assistant. The Pydantic `title` + `description` on each field
-    drive the labels and helper text the user sees. Field declaration
-    order is the form order; we put the most-likely-edited fields
-    first (company, focus, tier) and the power-user knobs last
-    (research depth, weights).
-
-    All fields except `company_name` have sensible defaults so a user
-    can submit the form by just typing a company name. The advanced
-    fields are visible but pre-filled — a user who scrolls past them
-    gets the same behaviour as one who tunes them.
+    the assistant. We surface FOUR fields in the form (company, focus
+    area, tier, weights). `research_depth` is a server-side default
+    held on the model for CLI / web / API but explicitly stripped
+    from the JSON schema in `model_json_schema()` below — Le Chat
+    users get medium depth (the right default for ~95% of runs);
+    power users who want to tune it use the standalone web app or
+    the CLI's --depth flag.
     """
 
     company_name: str = Field(
@@ -141,55 +138,71 @@ class WorkflowInput(BaseModel):
         max_length=200,
         title="Company",
         description=(
-            "The company you want GenAI use cases for. Try **Carrefour**, "
-            "**Mistral AI**, **L'Oréal**, **Veolia**, or **BNP Paribas** — "
-            "or any public company by legal or trade name."
+            "The company you want GenAI use cases for. "
+            "Examples: Carrefour, Mistral AI, L'Oréal, Veolia, BNP Paribas. "
+            "Any public company by legal or trade name works."
         ),
     )
     focus_area: FocusArea = Field(
         default=FocusArea.GENERAL,
         title="Focus area",
         description=(
-            "Which surface to bias the use cases toward. **General** is "
-            "balanced and is the right pick most of the time. **Operations** "
-            "biases toward supply chain / cost / efficiency. **Customer** "
-            "biases toward CX / personalisation. **Sustainability** biases "
-            "toward ESG / compliance."
+            "Bias the use cases toward a surface. "
+            "General — balanced, the right pick most of the time. "
+            "Operations — supply chain, cost, efficiency. "
+            "Customer — CX, personalisation. "
+            "Sustainability — ESG, compliance."
         ),
     )
     tier: Tier = Field(
         default=Tier.STANDARD,
         title="Performance tier",
         description=(
-            "Speed vs depth trade-off. **Fast** (~125s) uses Mistral Medium "
-            "for the use-case prose and skips polish/attribution — "
-            "Phase 3 benchmark showed equal-or-better confidence on Carrefour. "
-            "**Standard** (~215s) is the default — Mistral Large 3 for prose, "
-            "full guardrails, web_search budget 2. **Max** (~225s) adds more "
-            "grounding: web_search 4, deep-read top-5, judge T=0.05, rescue "
-            "cap 18 — pick this when claim density matters more than time."
-        ),
-    )
-    research_depth: ResearchDepth = Field(
-        default=ResearchDepth.MEDIUM,
-        title="Research depth",
-        description=(
-            "How many parallel research signals to gather. **Low** is "
-            "Wikipedia + verified-companies index + existing-AI-initiatives "
-            "lookup. **Medium** (default) adds recent news with deep-read. "
-            "**High** also pulls career pages (slow, ~30s extra)."
+            "Speed vs depth trade-off. "
+            "Fast (~125s) uses Mistral Medium for the prose, skips polish + attribution. "
+            "Standard (~215s, default) uses Mistral Large 3 with full guardrails. "
+            "Max (~225s) bumps web_search to 4, deep-read to top 5, judge to T=0.05, "
+            "rescue cap to 18 — pick this when claim density matters more than time."
         ),
     )
     weights: CriteriaWeights = Field(
         default_factory=CriteriaWeights,
-        title="Advanced — criteria weights",
+        title="Criteria weights (advanced — leave at 0.2 each unless you have a strong opinion)",
         description=(
-            "Per-criterion weight in the score. Defaults to 0.2 each "
-            "(equal). Override only if you have a strong opinion — e.g. "
-            "set Mistral suitability higher to bias toward use cases that "
-            "lean into Mistral's distinctive strengths."
+            "Per-criterion weight in the scoring step. Defaults to 0.2 each "
+            "(equal across relevance, iconic potential, estimated impact, "
+            "feasibility, Mistral suitability). Tune only if you want one "
+            "criterion to dominate — for example, set Mistral suitability "
+            "higher to bias toward use cases that lean into Mistral's "
+            "distinctive strengths."
         ),
     )
+
+    # Server-side default — kept on the model for CLI / web / API but
+    # stripped from the JSON schema below so Le Chat's auto-form
+    # doesn't render it.
+    research_depth: ResearchDepth = Field(default=ResearchDepth.MEDIUM)
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
+        schema = super().model_json_schema(*args, **kwargs)
+        # Hide research_depth from the Le Chat auto-form. Pydantic's
+        # `exclude=True` only drops the field from serialization, not
+        # from the schema; we have to manually rewrite the schema.
+        if "properties" in schema and "research_depth" in schema["properties"]:
+            schema["properties"].pop("research_depth")
+        if "required" in schema and "research_depth" in schema["required"]:
+            schema["required"].remove("research_depth")
+        if "$defs" in schema and "ResearchDepth" in schema["$defs"]:
+            # Remove the orphan ResearchDepth enum definition too if
+            # nothing else references it. Keep it if any other field
+            # still does.
+            other_refs = any(
+                "ResearchDepth" in str(v) for k, v in schema.get("properties", {}).items()
+            )
+            if not other_refs:
+                schema["$defs"].pop("ResearchDepth", None)
+        return schema
 
 
 class WorkflowStatus(BaseModel):
