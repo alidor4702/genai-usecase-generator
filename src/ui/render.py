@@ -407,10 +407,41 @@ def render_report_to_chunks(report: Report) -> dict[str, Any]:
             }
         )
 
+    # Fact-check breakdown — counts for the Le Chat PieChart. Buckets:
+    #   supported  — passed=True, no rescue (anchored in evidence pool directly)
+    #   rescued    — passed=True, rescue_tier set (web-verify saved it)
+    #   rewritten  — qualified_out=True (final-qualify rewrote to qualitative)
+    #   unsupported— passed=False (judge rejected or no source found)
+    fact_check_breakdown = {"supported": 0, "rescued": 0, "rewritten": 0, "unsupported": 0}
+    for c in report.quality.fact_check:
+        if c.qualified_out:
+            fact_check_breakdown["rewritten"] += 1
+        elif c.passed and c.rescue_tier:
+            fact_check_breakdown["rescued"] += 1
+        elif c.passed:
+            fact_check_breakdown["supported"] += 1
+        else:
+            fact_check_breakdown["unsupported"] += 1
+
     return {
         "executive_summary": "\n".join(exec_parts),
         "use_cases": use_cases,
         "verification_md": _quality_footer_md(report.quality, report.meta_review),
+        "fact_check_breakdown": fact_check_breakdown,
+        "confidence": (
+            report.meta_review.confidence if report.meta_review is not None else None
+        ),
+        "sales_engineer_ready": (
+            report.meta_review.sales_engineer_ready
+            if report.meta_review is not None
+            else False
+        ),
+        "cross_cutting_concern": (
+            report.meta_review.cross_cutting_concern
+            if report.meta_review is not None
+            else None
+        ),
+        "pass_rate": report.quality.fact_check_pass_rate,
     }
 
 

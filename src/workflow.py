@@ -62,6 +62,7 @@ with _temporal_workflow.unsafe.imports_passed_through():
     from src.activities.verify_per_candidate import verify_top_candidates_activity
     from src.activities.web_verify import web_verify_unsupported_claims_activity
     from src.config import settings
+    from src.ui.le_chat_components import build_report_component_tree
 
 # Pure typed-models module — no I/O, safe at definition time
 from src.models import (
@@ -416,61 +417,83 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         self.current_step = "complete"
         self.progress_percent = 100.0
 
-        # Le Chat output — one chat bubble (intro) + one canvas per
-        # logical section. Per-use-case canvases pair (markdown body,
-        # mermaid diagram) so each use case is self-contained and
-        # browsable. If chunks aren't available (activity failure),
-        # fall back to a single canvas with whatever markdown we have.
-        chat_intro = (
-            f"Report ready for **{company_name}** — open the canvases below "
-            f"to read each use case with its architecture diagram, plus the "
-            f"executive summary and verification report."
-        )
-        canvas_chunks: list[
+        # Le Chat output — Rich UI Components tree as the primary
+        # rendering, plus separate mermaid canvases for the per-use-case
+        # architecture diagrams (the UI Component library has no mermaid
+        # renderer, so diagrams ship alongside).
+        #
+        # Tree: Column [
+        #   Alert (only if confidence < 0.70 or not SE-ready)
+        #   Card "Executive summary" with Confidence/PassRate/Tier badges
+        #   Card per use case with body + Impact/Cost/Complexity/TTV badges
+        #   Card "Quality signals" with PieChart of fact-check breakdown
+        # ]
+        #
+        # If chunks is None (render_report_activity failed), fall back to
+        # a single text/markdown canvas with the bare error message.
+        chat_intro = f"Report ready for **{company_name}**."
+        output_chunks: list[
             workflows_mistralai.TextOutput | workflows_mistralai.ResourceOutput
         ] = [workflows_mistralai.TextOutput(text=chat_intro)]
 
         if chunks is not None:
-            exec_md = str(chunks.get("executive_summary", ""))
-            verification_md = str(chunks.get("verification_md", ""))
-            use_case_chunks = chunks.get("use_cases") or []
-            if exec_md:
-                canvas_chunks.append(
-                    _md_canvas(f"Executive summary — {company_name}", exec_md)
+            confidence = chunks.get("confidence")
+            pass_rate = chunks.get("pass_rate")
+            fact_check_breakdown = chunks.get("fact_check_breakdown")
+            sales_engineer_ready = bool(chunks.get("sales_engineer_ready", False))
+            cross_cutting = chunks.get("cross_cutting_concern")
+            try:
+                tree = build_report_component_tree(
+                    company_name=company_name,
+                    chunks=chunks,
+                    confidence=float(confidence) if isinstance(confidence, (int, float)) else None,
+                    pass_rate=float(pass_rate) if isinstance(pass_rate, (int, float)) else None,
+                    fact_check_breakdown=(
+                        fact_check_breakdown if isinstance(fact_check_breakdown, dict) else None
+                    ),
+                    sales_engineer_ready=sales_engineer_ready,
+                    cross_cutting_concern=str(cross_cutting) if cross_cutting else None,
+                    tier=settings.tier.value,
                 )
+                output_chunks.append(
+                    workflows_mistralai.ResourceOutput(
+                        resource=workflows_mistralai.UIComponentResource(component=tree)
+                    )
+                )
+                logger.info("workflow: built Rich UI Components tree for report")
+            except Exception as e:  # noqa: BLE001
+                logger.exception("workflow: UI Component tree FAILED — fallback to markdown: %s", e)
+                output_chunks.append(
+                    _md_canvas(f"GenAI use cases — {company_name}", full_md)
+                )
+
+            # Per-use-case mermaid diagrams as separate canvas chunks —
+            # the UI Component library doesn't have a mermaid renderer,
+            # so each architecture diagram ships as a focused canvas
+            # next to the structured component tree.
+            use_case_chunks = chunks.get("use_cases") or []
             if isinstance(use_case_chunks, list):
                 for i, uc in enumerate(use_case_chunks):
                     if not isinstance(uc, dict):
                         continue
-                    title = str(uc.get("title", f"Use case {i + 1}"))
-                    body_md = str(uc.get("body_md", ""))
                     diagram = str(uc.get("diagram_mermaid", ""))
-                    canvas_chunks.append(
-                        _md_canvas(f"Use case {i + 1} — {title}", body_md)
-                    )
                     if diagram:
-                        canvas_chunks.append(
+                        output_chunks.append(
                             _mermaid_canvas(
                                 f"Use case {i + 1} — architecture", diagram
                             )
                         )
-            if verification_md:
-                canvas_chunks.append(
-                    _md_canvas(
-                        f"Verification & quality — {company_name}", verification_md
-                    )
-                )
         else:
-            canvas_chunks.append(
+            output_chunks.append(
                 _md_canvas(f"GenAI use cases — {company_name}", full_md)
             )
 
         try:
-            await workflows_mistralai.send_assistant_message(canvas_chunks)
+            await workflows_mistralai.send_assistant_message(output_chunks)
             logger.info(
-                "workflow: send_assistant_message OK — pushed %d chunks", len(canvas_chunks)
+                "workflow: send_assistant_message OK — pushed %d chunks", len(output_chunks)
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("workflow: send_assistant_message FAILED — %s", e)
 
-        return workflows_mistralai.ChatAssistantWorkflowOutput(content=canvas_chunks)
+        return workflows_mistralai.ChatAssistantWorkflowOutput(content=output_chunks)
