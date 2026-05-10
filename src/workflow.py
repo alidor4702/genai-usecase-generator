@@ -8,7 +8,7 @@ Per Mistral Workflows rules (CLAUDE.md, architecture.md):
   activities, optionally waiting for user input.
 
 The workflow:
-  Step 0 (optional, conversational) — clarification: focus area + criteria weights
+  Le Chat input form — auto-rendered from `WorkflowInput` (company + focus area)
   Step 1 — research (parallel sub-tasks + synthesis)
   Confidence gate — graceful refusal if confidence too low and unverified
   Step 2 — retrieve top-k peer precedents
@@ -16,8 +16,8 @@ The workflow:
   Step 4 — score with self-consistency
   Step 5 — per-candidate verification of top-3
   Step 6 — selection + enrichment (top-3 final)
-  Step 7 — meta-evaluation (with optional weakest-use-case regeneration)
-  Render — Rich UI Components composition → ChatAssistantWorkflowOutput
+  Step 7 — meta-evaluation + web-verify rescue + source-judge + final-qualify
+  Render — markdown + mermaid canvases → ChatAssistantWorkflowOutput
 
 Returns ChatAssistantWorkflowOutput so the workflow can publish as a Le Chat
 assistant.
@@ -67,6 +67,7 @@ with _temporal_workflow.unsafe.imports_passed_through():
 from src.models import (
     CriteriaWeights,
     FocusArea,
+    WorkflowEntryInput,
     WorkflowInput,
     WorkflowStatus,
 )
@@ -124,44 +125,6 @@ def _mermaid_canvas(
     )
 
 
-def _parse_customization(text: str, params: WorkflowInput) -> WorkflowInput:
-    """Parse a free-form customization string from the Step 0 ChatInput and
-    return updated WorkflowInput. Recognized patterns:
-
-      - One of {general, operations, customer, sustainability} mentioned
-        anywhere → sets focus_area
-      - Five space- or comma-separated floats anywhere (each in [0, 1]) →
-        sets criteria weights in order: relevance, iconic, impact,
-        feasibility, mistral
-
-    Returns the original params unchanged if parsing finds nothing usable.
-    Pure function — safe to call from workflow code.
-    """
-    text_lower = text.lower().strip()
-    if not text_lower or text_lower in {"default", "go", "ok", "skip", "no"}:
-        return params
-
-    new_params = params.model_copy(deep=True)
-    for fa in FocusArea:
-        if fa.value in text_lower:
-            new_params.focus_area = fa
-            break
-
-    floats = re.findall(r"\d*\.\d+|\d+", text_lower)
-    if len(floats) >= 5:
-        try:
-            f = [float(x) for x in floats[:5]]
-            if all(0.0 <= w <= 1.0 for w in f):
-                new_params.weights = CriteriaWeights(
-                    relevance=f[0],
-                    iconic_potential=f[1],
-                    estimated_impact=f[2],
-                    feasibility=f[3],
-                    mistral_suitability=f[4],
-                )
-        except (ValueError, TypeError):
-            pass
-    return new_params
 
 
 def _build_refusal_output(
@@ -210,50 +173,21 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         )
 
     @workflows.workflow.entrypoint
-    async def run(self, params: WorkflowInput) -> workflows_mistralai.ChatAssistantWorkflowOutput:
+    async def run(self, entry: WorkflowEntryInput) -> workflows_mistralai.ChatAssistantWorkflowOutput:
+        # The entrypoint takes `WorkflowEntryInput` — a slim 2-field
+        # schema (company + focus) so Le Chat's auto-form is clean.
+        # Internally we expand to the full `WorkflowInput` with server
+        # defaults for weights + research_depth. Power users who want
+        # to tune those go through the standalone web app, which
+        # builds `WorkflowInput` directly.
+        params = WorkflowInput.from_entry(entry)
         self.company_name = params.company_name
 
-        # Step 0 — optional clarification checkpoint.
-        # Two-stage interactive flow using Mistral Workflows' wait_for_input:
-        #   (a) ConfirmationInput — does the user want defaults or to customize?
-        #   (b) If 'custom', ChatInput collects free-form focus + weights.
-        # Skipping the form is fine; the workflow proceeds with whatever
-        # WorkflowInput was passed in.
-        self.current_step = "clarification"
-        self.progress_percent = 2.0
-        try:
-            confirm = await self.wait_for_input(
-                workflows_mistralai.ConfirmationInput(
-                    options=[
-                        ("default", "Use defaults"),
-                        ("custom", "Customize focus + criteria weights"),
-                    ],
-                    description=(
-                        f"Generating GenAI use cases for **{params.company_name}**.\n\n"
-                        f"Default config: focus = `{params.focus_area.value}`, "
-                        f"all five criteria weighted equally (0.20 each).\n\n"
-                        f"Click **Use defaults** to proceed, or **Customize** to "
-                        f"adjust focus area and weights."
-                    ),
-                )
-            )
-            if getattr(confirm, "choice", "default") == "custom":
-                chat_in = await self.wait_for_input(
-                    workflows_mistralai.ChatInput(
-                        prompt=(
-                            "Type focus area + weights, e.g.: "
-                            "'operations, weights 0.3 0.3 0.2 0.1 0.1'  "
-                            "(focus options: general / operations / customer / "
-                            "sustainability; weights are 5 floats 0-1 in order: "
-                            "relevance, iconic, impact, feasibility, mistral)"
-                        ),
-                    )
-                )
-                params = _parse_customization(getattr(chat_in, "message", "") or "", params)
-        except Exception as e:  # noqa: BLE001
-            # If the runtime doesn't support interactive input (e.g. CLI
-            # invocation, older worker), proceed silently with defaults.
-            logger.info("workflow: Step 0 skipped (%s) — using passed params", type(e).__name__)
+        # No second clarification prompt — the slim entry form already
+        # collects everything we need. Earlier versions added an
+        # explicit `ConfirmationInput("Use defaults / Customize")`
+        # here, but it duplicated the form the user just filled and
+        # made the chat read like a multi-step bureaucracy.
 
         # Le Chat progress pattern — `workflows.task_from` with
         # `ChatAssistantWorkingTask`. Each phase emits ONE task block

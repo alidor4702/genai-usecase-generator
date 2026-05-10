@@ -118,13 +118,58 @@ class CriteriaWeights(BaseModel):
         )
 
 
+class WorkflowEntryInput(BaseModel):
+    """Le Chat's entry form schema — only the two fields a typical user
+    cares about. Le Chat auto-renders THIS as the input form on the
+    assistant. Power-user knobs (criteria weights, research depth) are
+    NOT on this model so they don't appear in the form. The workflow's
+    entrypoint expands this into a full `WorkflowInput` using
+    server-side defaults.
+    """
+
+    company_name: str = Field(
+        min_length=1,
+        max_length=200,
+        title="Company",
+        description=(
+            "Type the company you want use cases for. Try **Carrefour**, "
+            "**Mistral AI**, **L'Oréal**, **Veolia**, or **BNP Paribas**."
+        ),
+    )
+    focus_area: FocusArea = Field(
+        default=FocusArea.GENERAL,
+        title="Focus area",
+        description=(
+            "Bias the use cases toward a surface. **General** is balanced "
+            "and is the right pick most of the time."
+        ),
+    )
+
+
 class WorkflowInput(BaseModel):
-    """Top-level input to GenAIUseCaseWorkflow."""
+    """Internal pipeline input — the full structured config consumed by
+    activities. CLI / web app / API construct this directly with all
+    fields. Le Chat builds it inside the workflow entrypoint by
+    expanding `WorkflowEntryInput` with server-side defaults for
+    weights + research_depth.
+    """
 
     company_name: str = Field(min_length=1, max_length=200)
     focus_area: FocusArea = FocusArea.GENERAL
     weights: CriteriaWeights = Field(default_factory=CriteriaWeights)
     research_depth: ResearchDepth = ResearchDepth.MEDIUM
+
+    @classmethod
+    def from_entry(cls, entry: WorkflowEntryInput) -> WorkflowInput:
+        """Build a full WorkflowInput from a Le Chat entry form. Uses
+        server defaults for weights + research_depth (the slim entry
+        form omits those knobs)."""
+        return cls(
+            company_name=entry.company_name,
+            focus_area=entry.focus_area,
+            weights=CriteriaWeights(),
+            research_depth=ResearchDepth.MEDIUM,
+        )
 
 
 class WorkflowStatus(BaseModel):
