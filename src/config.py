@@ -16,14 +16,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Tier(StrEnum):
     """Performance vs depth trade-off, set per-run via the CLI flag.
 
-    fast      — skip polish/attribution/regen, no web_search tool, mistral-medium
-                for enrichment. Wall time ~60-90s.
-    standard  — full pipeline minus the heaviest knobs: web_search budget 2,
-                regen only if confidence < threshold, polish+attribution always.
-                Wall time ~2-3 minutes (default).
-    max       — current full pipeline: web_search budget 4, mistral-large for
-                enrichment, layer-2 fallback always, long max_tokens. Wall time
-                ~5-7 minutes.
+    Wall-time figures are measured against the v9.x five-company batch
+    (BNP / Carrefour / L'Oréal / Mistral / Veolia, standard tier mean).
+
+    fast      — web_search disabled in generation; polish + attribution
+                check skipped; mistral-medium replaces mistral-large for
+                the enrichment draft. Cuts ~50-60s versus standard at the
+                cost of less polished prose. Estimated ~150s; benchmarked
+                in Phase 3d.
+    standard  — full pipeline (default). web_search budget 2 in generation,
+                mistral-large for enrichment, polish + attribution always
+                run. Measured wall time: ~213s mean across the v9.2 batch.
+    max       — standard plus deeper verification: web_search budget 4 in
+                generation, deeper Tavily verify pass per top candidate.
+                Trades ~30-60s extra wall time for higher claim grounding
+                density. Benchmarked in Phase 3d.
     """
 
     FAST = "fast"
@@ -64,7 +71,20 @@ class Settings(BaseSettings):
 
     # ---- Pipeline parameters ----------------------------------------------
 
-    candidates_to_generate: int = Field(default=12, ge=3, le=20)
+    candidates_to_generate: int = Field(
+        default=8,
+        ge=3,
+        le=20,
+        description=(
+            "Number of candidate use cases the generator drafts before "
+            "the score → top-3 filter. Was 12 through v9.2; cut to 8 in "
+            "v9.3 after trace analysis showed the bottom 4 of 12 never "
+            "made the top-3 (rejection appendix consistently kept the "
+            "stronger near-misses). N=8 saves ~10-15s on generate + "
+            "score with no measurable top-3 quality loss. N=5 was tested "
+            "in Phase 3a — see docs/benchmarks/n_comparison.md."
+        ),
+    )
     top_k_precedents: int = Field(default=8, ge=3, le=20)
     research_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     meta_eval_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
