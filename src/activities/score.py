@@ -200,11 +200,17 @@ async def score_candidates_activity(
     client = mistral_client()
     user_msg = _build_user_message(batch, ctx)
 
-    pass_a, pass_b = await asyncio.gather(
-        _score_pass(client, user_msg, temperature=0.2),
-        _score_pass(client, user_msg, temperature=0.4),
-    )
-    merged = _avg_scores(pass_a, pass_b)
+    if settings.enable_single_pass_score:
+        # Phase 3e ablation path — one call at T=0.3 instead of the
+        # parallel two-pass average. Cuts ~17s of wall clock at the cost
+        # of less stable scores at the margin. Off by default.
+        merged = await _score_pass(client, user_msg, temperature=0.3)
+    else:
+        pass_a, pass_b = await asyncio.gather(
+            _score_pass(client, user_msg, temperature=0.2),
+            _score_pass(client, user_msg, temperature=0.4),
+        )
+        merged = _avg_scores(pass_a, pass_b)
     scored = _build_scored_candidates(batch.candidates, merged, weights)
     logger.info(
         "score: %d / %d candidates scored | top aggregate %.2f",

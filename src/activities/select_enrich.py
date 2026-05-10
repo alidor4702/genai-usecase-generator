@@ -990,7 +990,6 @@ async def select_and_enrich_activity(
     snippets_by_id: dict[str, list[SupportingSnippet]] = {
         r.candidate_id: list(r.supporting_snippets) for r in verified.results
     }
-    user_msg = _build_user_message(final, appendix, verdicts, ctx, ledger, snippets_by_id)
     # Tier dispatch: fast uses mistral-medium for enrichment (faster, slight
     # quality drop on prose polish but full guardrails preserved); standard
     # and max use mistral-large per the locked stack.
@@ -999,30 +998,58 @@ async def select_and_enrich_activity(
         if settings.tier.value == "fast"
         else settings.mistral_enrichment_model
     )
-    async with trace_step(
-        "enrich",
-        enrich_model,
-        "chat.complete",
-        inputs_summary=f"tier={settings.tier.value} top_3={[sc.candidate.id for sc in final]}",
-    ) as ev:
-        r = await client.chat.complete_async(
-            model=enrich_model,
-            temperature=0.4,
-            max_tokens=12_000,
-            timeout_ms=240_000,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": ENRICHMENT_SYSTEM},
-                {"role": "user", "content": user_msg},
-            ],
-        )
-        text = r.choices[0].message.content
-        if isinstance(text, list):
-            text = "".join(getattr(b, "text", "") for b in text)
-        data = json.loads(_strip_fence(str(text or "")))
-        ev.outputs_summary = f"enriched {len(data.get('top_use_cases', []))} use cases"
 
-    raw_uses = data.get("top_use_cases", [])
+    async def _one_call(subset: list[ScoredCandidate]) -> dict[str, object]:
+        """Run one enrichment LLM call against a candidate subset and
+        return the parsed JSON dict (keys: `top_use_cases`,
+        `rejected_appendix`). Used both for the serial path (subset =
+        full top-3) and the parallel-enrich path (subset = single
+        candidate, called 3× concurrently)."""
+        msg = _build_user_message(subset, appendix, verdicts, ctx, ledger, snippets_by_id)
+        async with trace_step(
+            "enrich",
+            enrich_model,
+            "chat.complete",
+            inputs_summary=(
+                f"tier={settings.tier.value} parallel={settings.enable_parallel_enrich} "
+                f"ids={[sc.candidate.id for sc in subset]}"
+            ),
+        ) as ev:
+            r = await client.chat.complete_async(
+                model=enrich_model,
+                temperature=0.4,
+                max_tokens=12_000,
+                timeout_ms=240_000,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": ENRICHMENT_SYSTEM},
+                    {"role": "user", "content": msg},
+                ],
+            )
+            text = r.choices[0].message.content
+            if isinstance(text, list):
+                text = "".join(getattr(b, "text", "") for b in text)
+            parsed = json.loads(_strip_fence(str(text or "")))
+            raw = parsed.get("top_use_cases", []) if isinstance(parsed, dict) else []
+            ev.outputs_summary = f"enriched {len(raw) if isinstance(raw, list) else 0} use cases"
+        return parsed if isinstance(parsed, dict) else {}
+
+    if settings.enable_parallel_enrich:
+        # Phase 3c — fire one LLM call per candidate concurrently.
+        # Each call lacks cross-use-case awareness (no diversity vs. the
+        # other top-3 entries) — that's the quality risk being measured.
+        # rejected_appendix is taken from the first call (each call sees
+        # the same near-miss appendix in its prompt anyway).
+        per_call = await asyncio.gather(*(_one_call([sc]) for sc in final))
+        raw_uses: list[object] = []
+        for d in per_call:
+            uc_list = d.get("top_use_cases", [])
+            if isinstance(uc_list, list):
+                raw_uses.extend(uc_list)
+        data = per_call[0] if per_call else {}
+    else:
+        data = await _one_call(final)
+        raw_uses = data.get("top_use_cases", []) if isinstance(data, dict) else []
     enriched: list[EnrichedUseCase] = []
     if isinstance(raw_uses, list):
         for raw, sc in zip(raw_uses, final, strict=False):

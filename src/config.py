@@ -137,6 +137,33 @@ class Settings(BaseSettings):
 
     tier: Tier = Tier.STANDARD
 
+    # ---- Experimental flags (off by default, enabled per benchmark) -------
+    #
+    # These are off in production because they change behaviour the audit
+    # hasn't fully validated yet. Each one is enabled via env var for a
+    # single benchmark run and the result is documented in
+    # docs/benchmarks/.
+
+    enable_parallel_enrich: bool = Field(
+        default=False,
+        description=(
+            "Replace the single Mistral Large 3 call drafting all 3 use "
+            "cases with 3 parallel calls drafting one each. Potential "
+            "wall-time win is 60-70% of the enrich phase (~50-60s). Risk: "
+            "each call lacks cross-use-case awareness for diversity / "
+            "cross-cutting concern detection. Benchmarked in Phase 3c."
+        ),
+    )
+    enable_single_pass_score: bool = Field(
+        default=False,
+        description=(
+            "Replace the two-pass self-consistency scorer (T=0.2 + T=0.4 "
+            "in parallel, average) with a single pass at T=0.3. Saves ~17s "
+            "wall time on score. Risk: less stable scores at the margin "
+            "could shuffle the top-3 selection. Benchmarked in Phase 3e."
+        ),
+    )
+
 
 # Module-level singleton, loaded once at process start.
 settings = Settings()
