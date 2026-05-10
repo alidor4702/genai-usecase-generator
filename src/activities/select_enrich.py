@@ -1001,86 +1001,54 @@ async def select_and_enrich_activity(
     )
 
     async def _one_call(subset: list[ScoredCandidate]) -> dict[str, object]:
-        """Run one streaming enrichment LLM call against a candidate
-        subset and return the parsed JSON dict (keys: `top_use_cases`,
-        `rejected_appendix`).
+        """Run one enrichment LLM call against a candidate subset and
+        return the parsed JSON dict (keys: `top_use_cases`,
+        `rejected_appendix`). Used both for the serial path (subset =
+        full top-3) and the parallel-enrich path (subset = single
+        candidate, called 3× concurrently).
 
-        Streams the response token-by-token via Mistral's
-        ``chat.stream_async`` + ``handle_chat_stream``. The stream
-        consumer (``handle_chat_stream``) emits an ``assistant_message``
-        Task with the aggregating content state on every delta, so
-        Le Chat renders the prose being typed in real time during the
-        ~60-90s enrich phase instead of showing a silent wait.
+        Note: this was briefly streamed in commit 667e6a6 via
+        ``chat.stream_async`` + ``handle_chat_stream`` so Le Chat could
+        render the prose live. The user reported the result looked
+        terrible because ``response_format={"type": "json_object"}``
+        forces the LLM to emit a structured JSON object — streaming
+        that meant raw JSON tokens (``{"top_use_cases": [`` etc.)
+        wrote themselves into the chat character-by-character, which
+        was uglier than the silent wait. Reverted to non-streaming
+        ``complete_async`` — the trade-off (90s silence vs visible
+        JSON garbage) is decisively in favour of the silent wait.
 
-        On any streaming failure we fall back to the non-streaming
-        ``complete_async`` call so a transient streaming bug never
-        blocks the report.
+        A future fix would be to drop ``response_format`` and stream
+        prose, then parse it with the LLM as a follow-up call — but
+        that's a bigger refactor that adds latency.
         """
-        from mistralai.workflows.plugins.mistralai.utils import handle_chat_stream
-
         msg = _build_user_message(subset, appendix, verdicts, ctx, ledger, snippets_by_id)
         async with trace_step(
             "enrich",
             enrich_model,
-            "chat.stream",
+            "chat.complete",
             inputs_summary=(
                 f"tier={settings.tier.value} parallel={settings.enable_parallel_enrich} "
                 f"ids={[sc.candidate.id for sc in subset]}"
             ),
         ) as ev:
-            text: str = ""
-            try:
-                # Stream tokens to Le Chat via the SDK's assistant-message
-                # Task primitive (which is what `handle_chat_stream` emits
-                # internally). Wrap the whole stream in asyncio.wait_for
-                # because chat.stream_async doesn't take timeout_ms — long
-                # streams that hang would otherwise stall the activity
-                # until its 300s start_to_close cap.
-                async def _run_stream() -> str:
-                    stream = await client.chat.stream_async(
-                        model=enrich_model,
-                        temperature=0.4,
-                        max_tokens=12_000,
-                        response_format={"type": "json_object"},
-                        messages=[
-                            {"role": "system", "content": ENRICHMENT_SYSTEM},
-                            {"role": "user", "content": msg},
-                        ],
-                    )
-                    assistant_msg = await handle_chat_stream(stream)
-                    out = assistant_msg.content
-                    if isinstance(out, list):
-                        out = "".join(getattr(b, "text", "") for b in out)
-                    return str(out or "")
-
-                text = await asyncio.wait_for(_run_stream(), timeout=240.0)
-            except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
-                # Streaming failed — fall back to non-streaming so the
-                # report still ships. The user sees no live typing but
-                # the activity completes normally.
-                logger.warning(
-                    "enrich: streaming failed (%s), falling back to non-streaming",
-                    type(e).__name__,
-                )
-                r = await client.chat.complete_async(
-                    model=enrich_model,
-                    temperature=0.4,
-                    max_tokens=12_000,
-                    timeout_ms=240_000,
-                    response_format={"type": "json_object"},
-                    messages=[
-                        {"role": "system", "content": ENRICHMENT_SYSTEM},
-                        {"role": "user", "content": msg},
-                    ],
-                )
-                text = r.choices[0].message.content
-                if isinstance(text, list):
-                    text = "".join(getattr(b, "text", "") for b in text)
-                text = str(text or "")
-
-            parsed = json.loads(_strip_fence(text))
+            r = await client.chat.complete_async(
+                model=enrich_model,
+                temperature=0.4,
+                max_tokens=12_000,
+                timeout_ms=240_000,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": ENRICHMENT_SYSTEM},
+                    {"role": "user", "content": msg},
+                ],
+            )
+            text = r.choices[0].message.content
+            if isinstance(text, list):
+                text = "".join(getattr(b, "text", "") for b in text)
+            parsed = json.loads(_strip_fence(str(text or "")))
             raw = parsed.get("top_use_cases", []) if isinstance(parsed, dict) else []
-            ev.outputs_summary = f"enriched {len(raw) if isinstance(raw, list) else 0} use cases (streamed)"
+            ev.outputs_summary = f"enriched {len(raw) if isinstance(raw, list) else 0} use cases"
         return parsed if isinstance(parsed, dict) else {}
 
     if settings.enable_parallel_enrich:
