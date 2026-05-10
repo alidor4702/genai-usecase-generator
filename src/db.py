@@ -8,6 +8,7 @@ the codebase.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,6 +17,14 @@ from pathlib import Path
 import aiosqlite
 
 from src.config import settings
+
+# Lazy-init guard for ensure_schema(). Runs once per process, per-db-path
+# at the first connect(). Without this, `cache` table is missing on a
+# fresh deploy (Render's container has no prior data/cache.db) and the
+# pipeline crashes with `OperationalError: no such table: cache` on
+# the first research-step cache lookup.
+_schema_lock = asyncio.Lock()
+_schema_initialised: set[str] = set()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS companies (
@@ -74,6 +83,14 @@ async def ensure_schema(path: Path | None = None) -> None:
 async def connect(path: Path | None = None) -> AsyncIterator[aiosqlite.Connection]:
     db_path = path or settings.sqlite_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    # Lazy-init the schema on first connect so a fresh deploy (no
+    # data/cache.db) doesn't crash the pipeline with "no such table".
+    key = str(db_path)
+    if key not in _schema_initialised:
+        async with _schema_lock:
+            if key not in _schema_initialised:
+                await ensure_schema(db_path)
+                _schema_initialised.add(key)
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
         yield db
