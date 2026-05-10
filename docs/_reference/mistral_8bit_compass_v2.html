@@ -1,0 +1,205 @@
+<style>
+.cmp-wrap { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 1.5rem 0 0.5rem; font-family: var(--font-sans); }
+.cmp-stage { position: relative; width: 420px; max-width: 100%; }
+.cmp-svg { display: block; width: 100%; height: auto; cursor: grab; -webkit-user-select: none; user-select: none; touch-action: none; }
+.cmp-svg:active { cursor: grabbing; }
+.cmp-needle {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  transition: transform 0.45s cubic-bezier(0.34, 1.4, 0.5, 1);
+  will-change: transform;
+}
+.cmp-needle.cmp-drag { transition: none; }
+.cmp-needle.cmp-spin { transition: transform 2.4s cubic-bezier(0.18, 0.7, 0.2, 1); }
+.cmp-readout { display: flex; gap: 18px; align-items: baseline; font-family: var(--font-mono); font-size: 13px; color: var(--color-text-secondary); letter-spacing: 0.04em; }
+.cmp-readout b { color: #FF8205; font-weight: 500; font-size: 16px; min-width: 56px; display: inline-block; }
+.cmp-readout .cmp-card { color: #FFCE00; font-weight: 500; font-size: 16px; letter-spacing: 0.1em; }
+.cmp-controls { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 420px; }
+.cmp-btn { background: transparent; border: 0.5px solid var(--color-border-secondary); color: var(--color-text-primary); padding: 7px 14px; border-radius: var(--border-radius-md); font-size: 13px; font-family: var(--font-sans); cursor: pointer; transition: background 0.15s, border-color 0.15s, transform 0.05s; }
+.cmp-btn:hover { background: var(--color-background-secondary); }
+.cmp-btn:active { transform: scale(0.97); }
+.cmp-btn.cmp-card-btn { background: rgba(255, 130, 5, 0.07); border-color: rgba(255, 130, 5, 0.35); color: #FF8205; font-weight: 500; min-width: 42px; font-family: var(--font-mono); letter-spacing: 0.08em; }
+.cmp-btn.cmp-card-btn:hover { background: rgba(255, 130, 5, 0.15); border-color: rgba(255, 130, 5, 0.6); }
+.cmp-hint { font-size: 12px; color: var(--color-text-tertiary); margin-top: 2px; }
+</style>
+
+<h2 class="sr-only">Interactive 8-bit pixel art compass with a draggable needle in Mistral's flame palette.</h2>
+
+<div class="cmp-wrap">
+  <div class="cmp-stage">
+    <svg class="cmp-svg" id="cmp-svg" viewBox="0 0 420 420" shape-rendering="crispEdges" role="img" aria-label="Pixel art compass, drag to rotate the needle">
+      <g id="cmp-dial"></g>
+      <g class="cmp-needle" id="cmp-needle"></g>
+    </svg>
+  </div>
+
+  <div class="cmp-readout">
+    <span>Heading <b id="cmp-deg">0°</b></span>
+    <span class="cmp-card" id="cmp-card">N</span>
+  </div>
+
+  <div class="cmp-controls">
+    <button class="cmp-btn cmp-card-btn" data-deg="0">N</button>
+    <button class="cmp-btn cmp-card-btn" data-deg="90">E</button>
+    <button class="cmp-btn cmp-card-btn" data-deg="180">S</button>
+    <button class="cmp-btn cmp-card-btn" data-deg="270">W</button>
+    <button class="cmp-btn" id="cmp-spin">Spin</button>
+    <button class="cmp-btn" id="cmp-reset">Reset</button>
+  </div>
+
+  <div class="cmp-hint">Drag the compass · click N E S W to snap · spin for fun</div>
+</div>
+
+<script>
+(function() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const PIX = 20;
+  const GRID = 21;
+  const CENTER = 10;
+
+  const C = {
+    cardinal: '#FFCE00',
+    cardinalHi: '#FFE066',
+    nFin:      '#FF4F00',
+    ordinal:   '#FF8205',
+    ring:      '#B8420A',
+    tick:      '#5C2008',
+    tickHi:    '#B8420A',
+    pivotIn:   '#FFF5E1',
+    pivotOut:  '#FFCE00',
+    needleN:   '#E63100',
+    needleNHi: '#FF6B1A',
+    needleNTip:'#FF8205',
+    needleS:   '#FFE8C2',
+    needleSHi: '#FFCE00',
+  };
+
+  const dialG = document.getElementById('cmp-dial');
+  const needleG = document.getElementById('cmp-needle');
+
+  function px(parent, gx, gy, color) {
+    const r = document.createElementNS(NS, 'rect');
+    r.setAttribute('x', gx * PIX);
+    r.setAttribute('y', gy * PIX);
+    r.setAttribute('width', PIX);
+    r.setAttribute('height', PIX);
+    r.setAttribute('fill', color);
+    parent.appendChild(r);
+  }
+
+  // ---- DIAL ----
+  for (let y = 0; y < GRID; y++) {
+    for (let x = 0; x < GRID; x++) {
+      const dx = x - CENTER, dy = y - CENTER;
+      const d2 = dx*dx + dy*dy;
+      const ax = Math.abs(dx), ay = Math.abs(dy);
+      const onAxis = (dx === 0 || dy === 0);
+      const onDiag = (ax === ay);
+
+      if (d2 >= 65 && d2 <= 85) {
+        let color = C.ring;
+        if (onDiag && d2 >= 72) color = C.ordinal;
+        if (onAxis) color = C.cardinal;
+        else if ((ax === 1 && ay >= 8) || (ay === 1 && ax >= 8)) color = C.nFin;
+        px(dialG, x, y, color);
+      }
+      if (d2 === 100 && onAxis) px(dialG, x, y, C.cardinal);
+      if (y === 0 && (x === 9 || x === 11)) px(dialG, x, y, C.cardinalHi);
+      if (onAxis && d2 === 49) px(dialG, x, y, C.tickHi);
+      if (onDiag && d2 === 50) px(dialG, x, y, C.tick);
+      if (onAxis && d2 === 25) px(dialG, x, y, C.tick);
+    }
+  }
+  px(dialG, 10, 0, C.nFin);
+
+  // ---- NEEDLE ----
+  const N = C.needleN, NH = C.needleNHi, NT = C.needleNTip;
+  const S = C.needleS, SH = C.needleSHi;
+  const P0 = C.pivotIn, P1 = C.pivotOut;
+
+  const needlePx = [
+    [10, 2, NT],
+    [10, 3, N],
+    [9, 4, N], [10, 4, NH], [11, 4, N],
+    [9, 5, N], [10, 5, NH], [11, 5, N],
+    [9, 6, N], [10, 6, NH], [11, 6, N],
+    [8, 7, N], [9, 7, N], [10, 7, NH], [11, 7, N], [12, 7, N],
+    [9, 8, N], [10, 8, NH], [11, 8, N],
+    [10, 9, P1],
+    [9, 10, P1], [10, 10, P0], [11, 10, P1],
+    [10, 11, SH],
+    [9, 12, S], [10, 12, SH], [11, 12, S],
+    [8, 13, S], [9, 13, S], [10, 13, SH], [11, 13, S], [12, 13, S],
+    [9, 14, S], [10, 14, SH], [11, 14, S],
+    [9, 15, S], [10, 15, SH], [11, 15, S],
+    [10, 16, S],
+    [10, 17, S],
+    [10, 18, S],
+  ];
+  needlePx.forEach(([x,y,c]) => px(needleG, x, y, c));
+
+  // ---- ROTATION ----
+  const svg = document.getElementById('cmp-svg');
+  const needle = document.getElementById('cmp-needle');
+  const degEl = document.getElementById('cmp-deg');
+  const cardEl = document.getElementById('cmp-card');
+
+  let angle = 0;
+  let dragging = false;
+
+  const dirs16 = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+
+  function applyAngle() {
+    needle.style.transform = `rotate(${angle}deg)`;
+    const a = ((angle % 360) + 360) % 360;
+    degEl.textContent = Math.round(a) + '\u00B0';
+    cardEl.textContent = dirs16[Math.round(a / 22.5) % 16];
+  }
+  applyAngle();
+
+  function angleFromPointer(clientX, clientY) {
+    const rect = svg.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = clientX - cx;
+    const dy = clientY - cy;
+    return (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+  }
+
+  function setAngle(deg, mode) {
+    angle = deg;
+    needle.classList.remove('cmp-drag', 'cmp-spin');
+    if (mode === 'drag') needle.classList.add('cmp-drag');
+    else if (mode === 'spin') needle.classList.add('cmp-spin');
+    applyAngle();
+  }
+
+  svg.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    svg.setPointerCapture(e.pointerId);
+    setAngle(angleFromPointer(e.clientX, e.clientY), 'drag');
+  });
+  svg.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    setAngle(angleFromPointer(e.clientX, e.clientY), 'drag');
+  });
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    needle.classList.remove('cmp-drag');
+  }
+  svg.addEventListener('pointerup', endDrag);
+  svg.addEventListener('pointercancel', endDrag);
+  svg.addEventListener('pointerleave', endDrag);
+
+  document.querySelectorAll('[data-deg]').forEach(btn => {
+    btn.addEventListener('click', () => setAngle(parseFloat(btn.dataset.deg), 'snap'));
+  });
+  document.getElementById('cmp-spin').addEventListener('click', () => {
+    const turns = 3 + Math.floor(Math.random() * 4);
+    const target = angle + turns * 360 + Math.floor(Math.random() * 360);
+    setAngle(target, 'spin');
+  });
+  document.getElementById('cmp-reset').addEventListener('click', () => setAngle(0, 'snap'));
+})();
+</script>

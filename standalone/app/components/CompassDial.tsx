@@ -335,7 +335,7 @@ export default function CompassDial({
               key={b.label}
               type="button"
               onClick={() => snapTo(b.deg)}
-              className="px-3.5 py-1.5 text-xs font-mono tracking-[0.08em] rounded-md border border-mistral-orange/35 bg-mistral-orange/[0.07] text-mistral-orangeBright hover:bg-mistral-orange/15 hover:border-mistral-orange/60 transition-colors min-w-[42px]"
+              className="px-3.5 py-1.5 text-xs font-mono tracking-[0.08em] rounded-md border border-mistral-orange/35 bg-mistral-orange/[0.07] text-mistral-orangeBright hover:bg-mistral-orange/15 hover:border-mistral-orange/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-mistral-orange/60 focus-visible:ring-offset-1 focus-visible:ring-offset-mistral-dark transition-colors min-w-[42px]"
             >
               {b.label}
             </button>
@@ -343,14 +343,14 @@ export default function CompassDial({
           <button
             type="button"
             onClick={spin}
-            className="px-3.5 py-1.5 text-xs rounded-md border border-mistral-border text-ink-secondary hover:text-white hover:border-mistral-orange/60 transition-colors"
+            className="px-3.5 py-1.5 text-xs rounded-md border border-mistral-border text-ink-secondary hover:text-white hover:border-mistral-orange/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-mistral-orange/60 focus-visible:ring-offset-1 focus-visible:ring-offset-mistral-dark transition-colors"
           >
             Spin
           </button>
           <button
             type="button"
             onClick={() => snapTo(0)}
-            className="px-3.5 py-1.5 text-xs rounded-md border border-mistral-border text-ink-secondary hover:text-white hover:border-mistral-orange/60 transition-colors"
+            className="px-3.5 py-1.5 text-xs rounded-md border border-mistral-border text-ink-secondary hover:text-white hover:border-mistral-orange/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-mistral-orange/60 focus-visible:ring-offset-1 focus-visible:ring-offset-mistral-dark transition-colors"
           >
             Reset
           </button>
