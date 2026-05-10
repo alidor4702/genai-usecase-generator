@@ -1,6 +1,7 @@
 "use client";
 import AnimatedBackground from "../components/AnimatedBackground";
 import MermaidDiagram from "../components/MermaidDiagram";
+import PipelineDiagram from "../components/PipelineDiagram";
 import SiteNav from "../components/SiteNav";
 
 /**
@@ -12,53 +13,12 @@ import SiteNav from "../components/SiteNav";
  * verification chain. No marketing copy.
  */
 
-// Pipeline rendered as 5 horizontal phase-bands stacked top-to-bottom.
-// Each subgraph flows LR internally (so steps in a phase read left to
-// right) and the bands stack vertically — fills the panel as a 2D
-// grid instead of a single long horizontal strip. The earlier `LR`
-// version put 14 boxes in one row which was unreadable.
-const PIPELINE_MERMAID = `
-flowchart TB
-  subgraph p1 ["Phase 1 — Research & retrieve"]
-    direction LR
-    Input(["Company + knobs"]) --> Research["1. Research<br/>Mistral Medium 3.5"]
-    Research --> GapFill["1b. Gap-fill<br/>Tavily"]
-    GapFill --> Retrieve["2. Retrieve<br/>cosine top-k"]
-  end
-  subgraph p2 ["Phase 2 — Candidate generation"]
-    direction LR
-    Generate["3. Generate 12<br/>Mistral Medium 3.5<br/>+ web_search"] --> Score["4. Score · 5 criteria<br/>Mistral Small × 2"]
-    Score --> Verify["5. Verify top-3<br/>Tavily + Small"]
-  end
-  subgraph p3 ["Phase 3 — Enrich top-3"]
-    direction LR
-    Enrich["6. Enrich<br/>Mistral Large 3"] --> Polish["6a. Polish<br/>full-pool"]
-    Polish --> MetaEval["7. Meta-eval<br/>per-claim<br/>Mistral Medium 3.5"]
-  end
-  subgraph p4 ["Phase 4 — Verification chain"]
-    direction LR
-    WebVerify["7c. Web-verify<br/>2-tier rescue"] --> Judge["7d. Judge<br/>self-correcting<br/>Mistral Small"]
-    Judge --> FinalQ["7e. Final qualify<br/>Mistral Small"]
-  end
-  subgraph p5 ["Phase 5 — Output"]
-    direction LR
-    Signals["Quality signals"] --> Output(["Report + persist"])
-  end
-
-  Retrieve --> Generate
-  Verify --> Enrich
-  MetaEval --> WebVerify
-  FinalQ --> Signals
-
-  classDef llm fill:#fa552e,stroke:#fdba8c,color:#fff,stroke-width:2px
-  classDef live fill:#1e3a8a,stroke:#60a5fa,color:#dbeafe,stroke-width:2px
-  classDef preset fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:2px
-  classDef io fill:#1f2530,stroke:#fa552e,color:#fff,stroke-width:1.5px
-  class Research,Generate,Score,Verify,Enrich,Polish,MetaEval,Judge,FinalQ,Signals llm
-  class GapFill,WebVerify live
-  class Retrieve preset
-  class Input,Output io
-`;
+// The pipeline diagram is rendered by a hand-rolled React grid in
+// PipelineDiagram.tsx — mermaid's flowchart layout collapses the
+// 14-step pipeline into either a single row or a single column
+// regardless of `direction LR` hints because inter-subgraph edges
+// force a rank order. The React component lays out 5 phase bands
+// top-to-bottom with cards inside each band flowing left-to-right.
 
 const LEDGER_MERMAID = `
 flowchart LR
@@ -174,7 +134,7 @@ export default function Architecture() {
             title="Full pipeline"
             subtitle="14 steps · activities decorated with Mistral Workflows determinism rules"
           >
-            <MermaidDiagram source={PIPELINE_MERMAID} id="arch-pipeline" />
+            <PipelineDiagram />
             <Legend
               items={[
                 { color: "bg-mistral-orange", label: "LLM activity" },

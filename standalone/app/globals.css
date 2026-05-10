@@ -262,18 +262,6 @@ html[data-theme="light"] .text-mistral-orangeBright { color: #c83f1f !important;
   100% { opacity: 1; transform: translateY(0); }
 }
 
-/* Compass needle — slow continuous rotation around the centre. Used
-   on the landing page hero. step()-based rotation gives an 8-bit jittery
-   feel rather than a smooth analog spin. */
-.compass-needle {
-  transform-origin: 50% 50%;
-  animation: compassSpin 6s steps(16, end) infinite;
-}
-@keyframes compassSpin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-
 /* 8-bit aesthetic helpers — opt-in via classes so the modern glass look
    isn't forced everywhere. Use .pixel-edge to remove border-radius and
    .pixel-blink for a stepped 4-fps-feel pulse. */

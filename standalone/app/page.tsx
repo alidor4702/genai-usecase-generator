@@ -2,88 +2,22 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AnimatedBackground from "./components/AnimatedBackground";
+import CompassDial from "./components/CompassDial";
 import SiteNav from "./components/SiteNav";
 
 /**
  * Landing page.
  *
  * Three things stack visually:
- *   1. Animated 8-bit compass — rotating needle on a fixed dial in
- *      the Compastral palette. Pure CSS keyframes; no JS animation.
+ *   1. Interactive 8-bit compass — drag to rotate, click N/E/S/W to
+ *      snap, Spin for fun. When the user isn't touching it, the needle
+ *      keeps rotating slowly from wherever it was last left.
  *   2. Typewriter "Compastral" wordmark — characters reveal one at a
  *      time. Loops once on mount.
  *   3. Tagline + Start button → /generate; secondary nav.
  */
 
 const FULL_WORD = "Compastral";
-
-function CompassDial({ size = 240 }: { size?: number }) {
-  // 16×16 grid for the dial face. The needle is a separate SVG layered
-  // on top, rotated by a CSS keyframe.
-  const G = 16;
-  const dialPixels: [number, number][] = [];
-  // Outer ring
-  for (let a = 0; a < G; a++) {
-    dialPixels.push([a, 0]); dialPixels.push([a, G - 1]);
-    dialPixels.push([0, a]); dialPixels.push([G - 1, a]);
-  }
-  // Cardinal ticks N/E/S/W
-  dialPixels.push([7, 1], [8, 1]);     // N
-  dialPixels.push([7, 14], [8, 14]);   // S
-  dialPixels.push([1, 7], [1, 8]);     // W
-  dialPixels.push([14, 7], [14, 8]);   // E
-  // Inner ring (octagonal-ish)
-  const inner: [number, number][] = [
-    [4, 3], [5, 3], [10, 3], [11, 3],
-    [3, 4], [12, 4],
-    [3, 5], [12, 5],
-    [3, 10], [12, 10],
-    [3, 11], [12, 11],
-    [4, 12], [5, 12], [10, 12], [11, 12],
-  ];
-  dialPixels.push(...inner);
-
-  return (
-    <div
-      className="relative inline-block"
-      style={{ width: size, height: size }}
-      aria-label="8-bit compass"
-    >
-      {/* Dial — static */}
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${G} ${G}`}
-        shapeRendering="crispEdges"
-        className="absolute inset-0"
-      >
-        {dialPixels.map(([x, y], i) => (
-          <rect key={i} x={x} y={y} width={1} height={1} fill="#fa552e" />
-        ))}
-      </svg>
-      {/* Needle — rotates */}
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${G} ${G}`}
-        shapeRendering="crispEdges"
-        className="absolute inset-0 compass-needle"
-      >
-        {[
-          [7, 4], [8, 4],
-          [7, 5], [8, 5],
-          [7, 6], [8, 6],
-          [6, 7], [7, 7], [8, 7], [9, 7],
-          [6, 8], [7, 8], [8, 8], [9, 8],
-        ].map(([x, y], i) => (
-          <rect key={i} x={x} y={y} width={1} height={1} fill="#fdba8c" />
-        ))}
-        {/* Centre pivot */}
-        <rect x={7} y={7} width={2} height={2} fill="#ffffff" />
-      </svg>
-    </div>
-  );
-}
 
 function Typewriter({ text }: { text: string }) {
   const [shown, setShown] = useState(0);
@@ -108,7 +42,7 @@ export default function Landing() {
         <SiteNav />
 
         <section className="flex flex-col items-center text-center pt-8 pb-12">
-          <CompassDial size={220} />
+          <CompassDial size={280} />
           <div className="text-[11px] uppercase tracking-[0.25em] text-mistral-orangeBright font-bold mt-8">
             Mistral Proto · Take-home
           </div>
