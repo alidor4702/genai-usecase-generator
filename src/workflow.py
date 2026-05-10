@@ -208,140 +208,189 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             # invocation, older worker), proceed silently with defaults.
             logger.info("workflow: Step 0 skipped (%s) — using passed params", type(e).__name__)
 
-        # Build a TodoList so Le Chat sees live progress for each pipeline
-        # phase. Without these, Le Chat shows a generic spinner for ~5 min
-        # then the conversation goes stale (no intermediate messages =
-        # runtime considers it timed out). Each `async with item:` flips
-        # the item's status todo → in_progress → done and emits an event.
-        research_item = workflows_mistralai.TodoListItem(
-            title="Research",
-            description="Reading Wikipedia, recent news, and existing AI initiatives to build a typed CompanyContext",
-        )
-        retrieve_item = workflows_mistralai.TodoListItem(
-            title="Retrieve precedents",
-            description="Searching the 2,150-deployment corpus for industry-similar peer examples",
-        )
-        generate_item = workflows_mistralai.TodoListItem(
-            title="Generate 12 candidates",
-            description="Brainstorming use cases grounded in the company's data, priorities, and the cited precedents",
-        )
-        score_item = workflows_mistralai.TodoListItem(
-            title="Score against 5 criteria",
-            description="Self-consistency: rating each candidate on relevance, iconic potential, impact, feasibility, Mistral suitability",
-        )
-        verify_item = workflows_mistralai.TodoListItem(
-            title="Verify top candidates",
-            description="Targeted live web searches to check what the company already does and surface grounding snippets",
-        )
-        enrich_item = workflows_mistralai.TodoListItem(
-            title="Write customer-ready prose",
-            description="Mistral Large drafting the top-3 use cases with descriptions, blueprints, examples, risks",
-        )
-        review_item = workflows_mistralai.TodoListItem(
-            title="Senior-reviewer fact-check",
-            description="Per-claim verification, web-verify rescue, source-judge, qualitative rewrite of unsupported claims",
-        )
+        # Le Chat progress pattern — `workflows.task_from` with
+        # `ChatAssistantWorkingTask`. This is the IDIOMATIC pattern in
+        # every assistant example shipped with the SDK
+        # (workflow_insurance_claims, workflow_extract_markdown,
+        # workflow_curve_analysis, workflow_chat_parse, ...). One
+        # task block per logical phase; the `title` shows as the
+        # inline "thinking" indicator in Le Chat, the `content` shows
+        # a summary line when the task completes.
+        #
+        # Earlier attempts using TodoList were the wrong primitive —
+        # TodoList is for a separate "checklist" UI and may not be
+        # rendered inline by Le Chat assistant chats.
 
-        async with workflows_mistralai.TodoList(items=[
-            research_item, retrieve_item, generate_item, score_item,
-            verify_item, enrich_item, review_item,
-        ]):
-            # ── Research ──────────────────────────────────────────────
-            self.current_step = "research"
-            self.progress_percent = 5.0
-            async with research_item:
-                ctx, ledger, bundle = await research_company_activity(
-                    params.company_name, params.research_depth
-                )
-                ctx, ledger = await enrich_company_context_activity(ctx, ledger, bundle)
-                logger.info(
-                    "workflow: evidence ledger seeded with %d entries", len(ledger.entries)
-                )
-
-            # Confidence gate (after the context-completion pass)
-            confidence_ok = (
-                ctx.meta.research_confidence >= settings.research_confidence_threshold
-                or ctx.meta.is_verified
-                or len(ctx.existing_ai_initiatives) > 0
+        # ── Research ──────────────────────────────────────────────────
+        self.current_step = "research"
+        self.progress_percent = 5.0
+        async with workflows.task_from(
+            state=workflows_mistralai.ChatAssistantWorkingTask(
+                title="Researching the company",
+                content="Reading Wikipedia + recent news + existing AI initiatives",
             )
-            if not confidence_ok:
-                self.current_step = "refused"
-                return _build_refusal_output(
-                    params.company_name, ctx.meta.research_sources
-                )
+        ) as task:
+            ctx, ledger, bundle = await research_company_activity(
+                params.company_name, params.research_depth
+            )
+            ctx, ledger = await enrich_company_context_activity(ctx, ledger, bundle)
+            logger.info(
+                "workflow: evidence ledger seeded with %d entries", len(ledger.entries)
+            )
+            await task.update_state(updates={
+                "title": "Research complete",
+                "content": (
+                    f"{len(ledger.entries)} ledger entries · "
+                    f"confidence {ctx.meta.research_confidence:.2f}"
+                ),
+            })
 
-            # ── Retrieve ──────────────────────────────────────────────
-            self.current_step = "retrieve"
-            self.progress_percent = 20.0
-            async with retrieve_item:
-                retrieved = await retrieve_precedents_activity(
-                    ctx, settings.top_k_precedents
-                )
+        # Confidence gate (after the context-completion pass)
+        confidence_ok = (
+            ctx.meta.research_confidence >= settings.research_confidence_threshold
+            or ctx.meta.is_verified
+            or len(ctx.existing_ai_initiatives) > 0
+        )
+        if not confidence_ok:
+            self.current_step = "refused"
+            return _build_refusal_output(
+                params.company_name, ctx.meta.research_sources
+            )
 
-            # ── Generate ──────────────────────────────────────────────
-            self.current_step = "generate"
-            self.progress_percent = 35.0
-            async with generate_item:
-                batch, ledger = await generate_candidates_activity(
-                    ctx, retrieved, params.focus_area.value, True, ledger=ledger
-                )
+        # ── Retrieve ──────────────────────────────────────────────────
+        self.current_step = "retrieve"
+        self.progress_percent = 20.0
+        async with workflows.task_from(
+            state=workflows_mistralai.ChatAssistantWorkingTask(
+                title="Retrieving peer precedents",
+                content="Searching the 2,150-deployment corpus for industry-similar examples",
+            )
+        ) as task:
+            retrieved = await retrieve_precedents_activity(
+                ctx, settings.top_k_precedents
+            )
+            await task.update_state(updates={
+                "title": "Retrieved peer precedents",
+                "content": f"{len(retrieved.items)} precedents from the corpus",
+            })
 
-            # ── Score ─────────────────────────────────────────────────
-            self.current_step = "score"
-            self.progress_percent = 55.0
-            async with score_item:
-                scored = await score_candidates_activity(batch, ctx, params.weights)
+        # ── Generate ──────────────────────────────────────────────────
+        self.current_step = "generate"
+        self.progress_percent = 35.0
+        async with workflows.task_from(
+            state=workflows_mistralai.ChatAssistantWorkingTask(
+                title="Generating 12 candidate use cases",
+                content="Mistral Medium drafting use cases grounded in the company's data + priorities",
+            )
+        ) as task:
+            batch, ledger = await generate_candidates_activity(
+                ctx, retrieved, params.focus_area.value, True, ledger=ledger
+            )
+            await task.update_state(updates={
+                "title": "Candidates generated",
+                "content": f"{len(batch.candidates)} candidates",
+            })
 
-            # ── Verify ────────────────────────────────────────────────
-            self.current_step = "verify"
-            self.progress_percent = 70.0
-            async with verify_item:
-                top_3_scored = scored.scored[:3]
-                verified, ledger = await verify_top_candidates_activity(
-                    top_3_scored, ctx, params.company_name, ledger=ledger
-                )
+        # ── Score ─────────────────────────────────────────────────────
+        self.current_step = "score"
+        self.progress_percent = 55.0
+        async with workflows.task_from(
+            state=workflows_mistralai.ChatAssistantWorkingTask(
+                title="Scoring against 5 criteria",
+                content="Self-consistency: relevance · iconic potential · impact · feasibility · Mistral fit",
+            )
+        ) as task:
+            scored = await score_candidates_activity(batch, ctx, params.weights)
+            await task.update_state(updates={
+                "title": "Candidates scored",
+                "content": f"top aggregate score: {scored.scored[0].aggregate_score:.2f}",
+            })
 
-            # ── Enrich ────────────────────────────────────────────────
-            self.current_step = "enrich"
-            self.progress_percent = 80.0
-            async with enrich_item:
-                enriched_uses, rejected = await select_and_enrich_activity(
-                    scored, verified, ctx, retrieved=retrieved, ledger=ledger
-                )
+        # ── Verify ────────────────────────────────────────────────────
+        self.current_step = "verify"
+        self.progress_percent = 70.0
+        async with workflows.task_from(
+            state=workflows_mistralai.ChatAssistantWorkingTask(
+                title="Verifying top candidates against the live web",
+                content="Targeted Tavily searches to check what the company already does",
+            )
+        ) as task:
+            top_3_scored = scored.scored[:3]
+            verified, ledger = await verify_top_candidates_activity(
+                top_3_scored, ctx, params.company_name, ledger=ledger
+            )
+            await task.update_state(updates={
+                "title": "Verification complete",
+                "content": f"{len(verified.results)} candidates verified",
+            })
 
-            # ── Review (meta-eval + web-verify + source-judge + final-qualify + quality signals) ──
+        # ── Enrich ────────────────────────────────────────────────────
+        self.current_step = "enrich"
+        self.progress_percent = 80.0
+        async with workflows.task_from(
+            state=workflows_mistralai.ChatAssistantWorkingTask(
+                title="Writing customer-ready prose",
+                content="Mistral Large 3 drafting the top-3 with descriptions, blueprints, risks",
+            )
+        ) as task:
+            enriched_uses, rejected = await select_and_enrich_activity(
+                scored, verified, ctx, retrieved=retrieved, ledger=ledger
+            )
+            await task.update_state(updates={
+                "title": "Top-3 enriched",
+                "content": f"{len(enriched_uses)} customer-ready use cases",
+            })
+
+        # ── Review (bundles meta-eval + web-verify + source-judge + final-qualify + quality-signals) ──
+        async with workflows.task_from(
+            state=workflows_mistralai.ChatAssistantWorkingTask(
+                title="Senior-reviewer fact-check",
+                content="Per-claim verification, web-verify rescue, source-judge, qualitative rewrite",
+            )
+        ) as task:
             self.current_step = "meta_evaluate"
             self.progress_percent = 88.0
-            async with review_item:
-                review, fact_claims = await meta_evaluate_activity(
-                    enriched_uses, rejected, ctx, retrieved=retrieved, ledger=ledger
-                )
+            review, fact_claims = await meta_evaluate_activity(
+                enriched_uses, rejected, ctx, retrieved=retrieved, ledger=ledger
+            )
 
-                self.current_step = "web_verify"
-                self.progress_percent = 90.0
-                review, fact_claims, ledger = await web_verify_unsupported_claims_activity(
-                    review, fact_claims, ctx.identity.name, ledger
-                )
+            self.current_step = "web_verify"
+            self.progress_percent = 90.0
+            review, fact_claims, ledger = await web_verify_unsupported_claims_activity(
+                review, fact_claims, ctx.identity.name, ledger
+            )
 
-                self.current_step = "source_judge"
-                self.progress_percent = 92.0
-                review, fact_claims, enriched_uses_post = await judge_claim_sources_activity(
-                    review, fact_claims, ledger, enriched_uses
-                )
-                if enriched_uses_post is not None:
-                    enriched_uses = enriched_uses_post
+            self.current_step = "source_judge"
+            self.progress_percent = 92.0
+            review, fact_claims, enriched_uses_post = await judge_claim_sources_activity(
+                review, fact_claims, ledger, enriched_uses
+            )
+            if enriched_uses_post is not None:
+                enriched_uses = enriched_uses_post
 
-                self.current_step = "final_qualify"
-                self.progress_percent = 94.0
-                enriched_uses, fact_claims = await final_qualitative_replacement_activity(
-                    enriched_uses, fact_claims
-                )
+            self.current_step = "final_qualify"
+            self.progress_percent = 94.0
+            enriched_uses, fact_claims = await final_qualitative_replacement_activity(
+                enriched_uses, fact_claims
+            )
 
-                self.current_step = "quality_signals"
-                self.progress_percent = 96.0
-                signals = await compute_quality_signals_activity(
-                    enriched_uses, ctx, fact_claims
-                )
+            self.current_step = "quality_signals"
+            self.progress_percent = 96.0
+            signals = await compute_quality_signals_activity(
+                enriched_uses, ctx, fact_claims
+            )
+
+            passed = sum(1 for c in fact_claims if c.passed and not c.qualified_out)
+            in_scope = sum(1 for c in fact_claims if not c.qualified_out)
+            pass_rate = passed / max(1, in_scope)
+            await task.update_state(updates={
+                "title": "Review complete",
+                "content": (
+                    f"fact-check pass rate {pass_rate:.0%} ({passed}/{in_scope}) · "
+                    f"confidence {review.confidence:.2f} · "
+                    f"{'SE-ready' if review.sales_engineer_ready else 'draft'}"
+                ),
+            })
 
         # ── Build the final report ────────────────────────────────────
         self.current_step = "render"
@@ -351,10 +400,7 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             f"scored against the five-criteria rubric and verified against "
             f"{len(ctx.existing_ai_initiatives)} existing AI initiative(s) discovered during research."
         )
-        # Build Report mainly for typed validation + future Canvas/Components
-        # paths. The actual content sent to Le Chat is the per-use-case
-        # markdown built from `enriched_uses` + `signals` directly below.
-        _report = Report(
+        report = Report(
             company=ctx,
             weights_used=params.weights,
             focus_area=params.focus_area,
@@ -365,48 +411,18 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             meta_review=review,
             intro_text=intro,
         )
-        del _report  # silence F841 — used only for validation side-effect
 
-        # Le Chat output strategy — chunked plain TextOutput:
-        # The simplest pattern the SDK's own example workflows use for
-        # long markdown content (see
-        # mistralai/workflows/examples/assist/workflow_extract_markdown.py).
-        # Le Chat renders TextOutput as markdown with mermaid blocks
-        # supported. Splitting into multiple chunks (intro / each use
-        # case / quality footer) keeps any individual message under
-        # ~10 KB which is within Le Chat's per-message comfort zone.
-        #
-        # Why NOT Canvas / UIComponentResource here: both add a
-        # serialisation layer that's harder to debug when something
-        # fails. The v9 hang was almost certainly the
-        # UIComponentResource(Column(...)) shape; v9.1 first tried
-        # CanvasResource(text/markdown) but reports were failing in
-        # Le Chat post-render anyway, possibly because the 20-25 KB
-        # markdown body was hitting an undocumented size limit. Plain
-        # TextOutput chunks are the safest path.
-        chunks: list[workflows_mistralai.ContentChunk] = [
-            workflows_mistralai.TextOutput(text=intro),
-        ]
-        # One TextOutput per use case (with the case's full prose +
-        # blueprint mermaid). Then a final TextOutput for the quality
-        # footer + considered-but-not-selected list.
-        from src.ui.render import (  # noqa: PLC0415 — kept inline so workflow
-            _format_use_case_md,    # determinism rules don't drag the helper
-            _quality_footer_md,     # into the top-of-module import graph.
-            _rejected_md,
-        )
-        for i, uc in enumerate(enriched_uses):
-            spec = (
-                signals.specificity_per_use_case[i]
-                if i < len(signals.specificity_per_use_case)
-                else None
-            )
-            uc_md = _format_use_case_md(uc, spec)
-            chunks.append(workflows_mistralai.TextOutput(text=uc_md))
-        footer_md = "## Considered but not selected\n" + _rejected_md(rejected) + "\n\n"
-        footer_md += _quality_footer_md(signals, review)
-        chunks.append(workflows_mistralai.TextOutput(text=footer_md))
+        # Le Chat output — single TextOutput. This is the shape every
+        # official SDK assistant example uses (workflow_extract_markdown,
+        # workflow_chat_parse, workflow_embeddings, workflow_insurance_claims).
+        # No multi-chunk content[]; no Canvas; no UIComponentResource —
+        # those alternative paths each caused different failures
+        # (hang post-render, size limits, multi-chunk display issues).
+        from src.ui.render import render_report_to_markdown  # noqa: PLC0415
+        combined_md = render_report_to_markdown(report)
 
         self.current_step = "complete"
         self.progress_percent = 100.0
-        return workflows_mistralai.ChatAssistantWorkflowOutput(content=chunks)
+        return workflows_mistralai.ChatAssistantWorkflowOutput(
+            content=[workflows_mistralai.TextOutput(text=combined_md)]
+        )
