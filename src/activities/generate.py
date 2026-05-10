@@ -300,6 +300,7 @@ def _avg_pairwise_cosine(matrix: np.ndarray) -> float:
 
 
 from src._util import strip_fence as _strip_fence  # noqa: E402
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 
 # ---------------------------------------------------------------------------
@@ -588,7 +589,7 @@ async def _call_generator_with_tools(
 # ---------------------------------------------------------------------------
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=600))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=600), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def generate_candidates_activity(
     ctx: CompanyContext,
     retrieved: RetrievedPrecedents,

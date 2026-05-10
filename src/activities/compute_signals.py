@@ -29,6 +29,7 @@ from src.models import (
 )
 from src.quality_signals import assemble_quality_signals
 from src.trace import trace_step
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ async def _llm_specificity_per_use_case(
     return out
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=60))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=60), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def compute_quality_signals_activity(
     uses: list[EnrichedUseCase],
     ctx: CompanyContext,

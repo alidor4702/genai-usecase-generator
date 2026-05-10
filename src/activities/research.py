@@ -226,6 +226,7 @@ async def _gather_research_bundle(
 
 
 from src._util import strip_fence as _strip_fence  # backward-compatible alias
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 
 async def _synthesize_company_context(name: str, bundle: ResearchBundle) -> CompanyContext:
@@ -440,7 +441,7 @@ def _seed_ledger_from_bundle(
     return ledger
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=120))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=120), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def research_company_activity(
     company_name: str, depth: ResearchDepth = ResearchDepth.MEDIUM
 ) -> tuple[CompanyContext, EvidenceLedger, ResearchBundle]:
@@ -762,7 +763,7 @@ async def _resynthesize_with_extra_signals(
     return _coerce_company_context(name, bundle, data)
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=180))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=180), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def enrich_company_context_activity(
     ctx: CompanyContext,
     ledger: EvidenceLedger | None = None,

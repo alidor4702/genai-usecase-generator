@@ -72,6 +72,7 @@ def _build_user_message(batch: CandidateBatch, ctx: CompanyContext) -> str:
 
 
 from src._util import strip_fence as _strip_fence  # noqa: E402
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 
 async def _score_pass(
@@ -191,7 +192,7 @@ def _build_scored_candidates(
     return out
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=180))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=180), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def score_candidates_activity(
     batch: CandidateBatch, ctx: CompanyContext, weights: CriteriaWeights
 ) -> ScoredBatch:

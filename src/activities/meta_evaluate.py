@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 from src._util import strip_fence as _strip_fence  # noqa: E402
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 
 # Regex patterns for phantom claims — phrasings the meta-eval LLM
@@ -243,7 +244,7 @@ def _build_user_message(
     )
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=300))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=300), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def meta_evaluate_activity(
     uses: list[EnrichedUseCase],
     rejected: list[RejectedCandidate],

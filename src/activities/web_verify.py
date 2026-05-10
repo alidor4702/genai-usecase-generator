@@ -45,6 +45,7 @@ from src.models import (
 from scripts._fetch import extract_main_text, fetch_html  # noqa: I001
 from src.trace import trace_step
 from src.web_verify import claim_anchor_present, classify_source
+from src._rate_limits import TAVILY_API_RATE_LIMIT
 
 
 async def _deep_read_body(http: httpx.AsyncClient, url: str) -> str:
@@ -174,7 +175,7 @@ async def _rescue_one_claim(
     return None
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=180))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=180), rate_limit=TAVILY_API_RATE_LIMIT)
 async def web_verify_unsupported_claims_activity(
     review: MetaEvalReview,
     claims: list[FactCheckEntry],

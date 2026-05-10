@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 from src._util import strip_fence as _strip_fence  # noqa: E402
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 
 def _coerce_str_list(v: object) -> list[str]:
@@ -947,7 +948,7 @@ def _apply_numeric_anchoring(
 
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=300))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=300), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def select_and_enrich_activity(
     scored: ScoredBatch,
     verified: VerificationBatch,
@@ -1000,38 +1001,86 @@ async def select_and_enrich_activity(
     )
 
     async def _one_call(subset: list[ScoredCandidate]) -> dict[str, object]:
-        """Run one enrichment LLM call against a candidate subset and
-        return the parsed JSON dict (keys: `top_use_cases`,
-        `rejected_appendix`). Used both for the serial path (subset =
-        full top-3) and the parallel-enrich path (subset = single
-        candidate, called 3× concurrently)."""
+        """Run one streaming enrichment LLM call against a candidate
+        subset and return the parsed JSON dict (keys: `top_use_cases`,
+        `rejected_appendix`).
+
+        Streams the response token-by-token via Mistral's
+        ``chat.stream_async`` + ``handle_chat_stream``. The stream
+        consumer (``handle_chat_stream``) emits an ``assistant_message``
+        Task with the aggregating content state on every delta, so
+        Le Chat renders the prose being typed in real time during the
+        ~60-90s enrich phase instead of showing a silent wait.
+
+        On any streaming failure we fall back to the non-streaming
+        ``complete_async`` call so a transient streaming bug never
+        blocks the report.
+        """
+        from mistralai.workflows.plugins.mistralai.utils import handle_chat_stream
+
         msg = _build_user_message(subset, appendix, verdicts, ctx, ledger, snippets_by_id)
         async with trace_step(
             "enrich",
             enrich_model,
-            "chat.complete",
+            "chat.stream",
             inputs_summary=(
                 f"tier={settings.tier.value} parallel={settings.enable_parallel_enrich} "
                 f"ids={[sc.candidate.id for sc in subset]}"
             ),
         ) as ev:
-            r = await client.chat.complete_async(
-                model=enrich_model,
-                temperature=0.4,
-                max_tokens=12_000,
-                timeout_ms=240_000,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": ENRICHMENT_SYSTEM},
-                    {"role": "user", "content": msg},
-                ],
-            )
-            text = r.choices[0].message.content
-            if isinstance(text, list):
-                text = "".join(getattr(b, "text", "") for b in text)
-            parsed = json.loads(_strip_fence(str(text or "")))
+            text: str = ""
+            try:
+                # Stream tokens to Le Chat via the SDK's assistant-message
+                # Task primitive (which is what `handle_chat_stream` emits
+                # internally). Wrap the whole stream in asyncio.wait_for
+                # because chat.stream_async doesn't take timeout_ms — long
+                # streams that hang would otherwise stall the activity
+                # until its 300s start_to_close cap.
+                async def _run_stream() -> str:
+                    stream = await client.chat.stream_async(
+                        model=enrich_model,
+                        temperature=0.4,
+                        max_tokens=12_000,
+                        response_format={"type": "json_object"},
+                        messages=[
+                            {"role": "system", "content": ENRICHMENT_SYSTEM},
+                            {"role": "user", "content": msg},
+                        ],
+                    )
+                    assistant_msg = await handle_chat_stream(stream)
+                    out = assistant_msg.content
+                    if isinstance(out, list):
+                        out = "".join(getattr(b, "text", "") for b in out)
+                    return str(out or "")
+
+                text = await asyncio.wait_for(_run_stream(), timeout=240.0)
+            except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
+                # Streaming failed — fall back to non-streaming so the
+                # report still ships. The user sees no live typing but
+                # the activity completes normally.
+                logger.warning(
+                    "enrich: streaming failed (%s), falling back to non-streaming",
+                    type(e).__name__,
+                )
+                r = await client.chat.complete_async(
+                    model=enrich_model,
+                    temperature=0.4,
+                    max_tokens=12_000,
+                    timeout_ms=240_000,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": ENRICHMENT_SYSTEM},
+                        {"role": "user", "content": msg},
+                    ],
+                )
+                text = r.choices[0].message.content
+                if isinstance(text, list):
+                    text = "".join(getattr(b, "text", "") for b in text)
+                text = str(text or "")
+
+            parsed = json.loads(_strip_fence(text))
             raw = parsed.get("top_use_cases", []) if isinstance(parsed, dict) else []
-            ev.outputs_summary = f"enriched {len(raw) if isinstance(raw, list) else 0} use cases"
+            ev.outputs_summary = f"enriched {len(raw) if isinstance(raw, list) else 0} use cases (streamed)"
         return parsed if isinstance(parsed, dict) else {}
 
     if settings.enable_parallel_enrich:

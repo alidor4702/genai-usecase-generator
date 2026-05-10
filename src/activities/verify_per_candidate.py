@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 from src._util import strip_fence as _strip_fence  # noqa: E402
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 
 def _candidate_query(company_name: str, sc: ScoredCandidate) -> str:
@@ -216,7 +217,7 @@ async def _verify_one(
         )
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=240))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=240), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def verify_top_candidates_activity(
     top_candidates: list[ScoredCandidate],
     ctx: CompanyContext,

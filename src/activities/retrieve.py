@@ -20,6 +20,7 @@ from src.config import settings
 from src.models import CompanyContext, RetrievedPrecedents
 from src.precedents import retrieve_top_k
 from src.trace import trace_step
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ def _company_query_text(ctx: CompanyContext) -> str:
     return "\n".join(parts)
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=30))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=30), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def retrieve_precedents_activity(
     ctx: CompanyContext, k: int = 8, min_depth: float = 0.4
 ) -> RetrievedPrecedents:

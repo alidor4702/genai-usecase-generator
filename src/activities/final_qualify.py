@@ -37,6 +37,7 @@ from src._util import strip_fence
 from src.config import settings
 from src.models import EnrichedUseCase, FactCheckEntry
 from src.trace import trace_step
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +213,7 @@ async def _qualify_one_use_case(
     return updated, qualified_texts
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=180))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=180), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def final_qualitative_replacement_activity(
     enriched_uses: list[EnrichedUseCase],
     fact_claims: list[FactCheckEntry],

@@ -23,6 +23,7 @@ import mistralai.workflows as workflows
 from src._clients import mistral_client
 from src.config import settings
 from src.trace import trace_step
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ def _identify_use_case_index(chat_msg: str, n_use_cases: int) -> int | None:
     return None
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=120))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=120), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def refine_use_case_activity(
     use_case_body_md: str,
     edited_canvas_content: str,

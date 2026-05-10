@@ -53,6 +53,7 @@ from src.models import (
     MetaEvalReview,
 )
 from src.trace import trace_step
+from src._rate_limits import MISTRAL_API_RATE_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +342,7 @@ def _apply_correction_to_prose(
     return True
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=240))
+@workflows.activity(start_to_close_timeout=timedelta(seconds=240), rate_limit=MISTRAL_API_RATE_LIMIT)
 async def judge_claim_sources_activity(
     review: MetaEvalReview,
     claims: list[FactCheckEntry],
