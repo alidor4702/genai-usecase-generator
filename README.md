@@ -43,10 +43,10 @@ uv run python -m scripts.run_example "Carrefour" --out docs/examples/local/carre
 
 ## What good output looks like
 
-For Carrefour (v9.8, latest batches in [`docs/benchmarks/v9_4/`](docs/benchmarks/v9_4) through [`docs/benchmarks/v9_9/`](docs/benchmarks/v9_9)):
+For Carrefour (recent batches in [`docs/benchmarks/`](docs/benchmarks/)):
 
 - **Source-anchored claim ratio:** 83-92% across recent runs (24-26 substantive claims with explicit source support)
-- **Meta-evaluator confidence:** 0.65-0.92 depending on run (SE-ready bar: ≥ 0.80 since v9.8)
+- **Meta-evaluator confidence:** 0.65-0.92 depending on run (sales-engineer-ready bar: ≥ 0.80)
 - **Per-claim transparency block** with chips: `[verified ↗ Reuters]` / `[corrected ↗ → 56 countries]` / `[judge: rejected]` / `[rewritten qualitatively]`
 - Three customer-ready use cases:
   1. *AI-powered own-brand nutritional insight engine for the 14k-store network*
@@ -127,11 +127,11 @@ The system uses **retrieval-augmented generation (RAG)** against a closed corpus
 
 Every entry is embedded with `mistral-embed` once at build time, stored in `data/genai_usecases.db`, and retrieved at query time via **dense semantic search** (cosine similarity over the embeddings) followed by **Maximal Marginal Relevance (MMR)** re-ranking for diversity. The retrieval step surfaces the top-k peer deployments for the target company *before* generation, so the generator grounds each candidate in "this has been shipped at scale at X" rather than inventing.
 
-The corpus is the **proven-elsewhere** half of the methodology: every `inspired_by` reference in an enriched use case points to a corpus entry. Free-text peer references are also allowed (with the v6 quantitative-attribution rule), but the de-risking signal lives here.
+The corpus is the **proven-elsewhere** half of the methodology: every `inspired_by` reference in an enriched use case points to a corpus entry. Free-text peer references are also allowed (with a quantitative-attribution rule that requires a specific deployment, not a generic "many companies use AI for this" claim), but the de-risking signal lives in the corpus.
 
 Corpus build is in `scripts/build_data.py`; data-source breakdown in [`docs/data_sources.md`](docs/data_sources.md).
 
-## The verification chain (how the v9.8 system anchors claims)
+## The verification chain (how the system anchors claims)
 
 The most distinctive part of this build is what happens AFTER the LLM
 produces the prose. The verification chain is a **multi-stage LLM-as-judge
@@ -166,7 +166,7 @@ Substantive claim from prose
 Three things this design enforces:
 
 - **Every numerical or named-entity claim has an explicit source URL** (or it's qualified out of the prose). The user sees `[verified ↗ Reuters]`, `[corrected ↗ → 56 countries]`, `[judge: rejected]`, or `[rewritten qualitatively]` chips in the per-claim transparency block.
-- **The judge catches false-positive citations** — a YouTube video titled "LVMH × AI" doesn't anchor a "LVMH reported 25% efficiency gain" claim, even though it contains the entity. The **LLM-as-judge** layer (source-judge) is the v7 gate that catches this class.
+- **The judge catches false-positive citations** — a YouTube video titled "LVMH × AI" doesn't anchor a "LVMH reported 25% efficiency gain" claim, even though it contains the entity. The **LLM-as-judge** layer (source-judge) is the gate that catches this class.
 - **The system self-corrects when sources contradict** — this is the **self-refinement** half of the chain: if the prose says "12 European languages" and the source says "9 European languages", the judge returns the corrected value as a drop-in phrase; the system patches the prose inline and marks the claim with a `[corrected ↗ → 9 European languages]` chip.
 
 **Sales-engineer-ready threshold: confidence ≥ 0.80**. Below 0.80 the
@@ -334,13 +334,13 @@ Per run, at `tier=standard`:
 - **~14 LLM calls** (research synthesis, industry-label polish, gap-fill × 4, generation, scoring × 2, per-candidate verification × 3, enrichment, polish, meta-eval, judge × ~25 pairs, final-qualify × 3) — ~$0.10-0.20 in Mistral API credits
 - **~10-15 Tavily searches** (news, gap-fill, per-candidate verify, web-verify rescue) — ~$0.05-0.10
 - **~5-10 HTTP fetches** (Wikipedia, news deep-reads) — free
-- **~250s wall-clock** end-to-end (down from 5+ min in v8 after the v9 perf passes)
+- **~250s wall-clock** end-to-end
 
 Total ~$0.20-0.30 per run.
 
 ## Quality and evaluation
 
-Recent benchmark batches in [`docs/benchmarks/`](docs/benchmarks/). The v9.9 batch validated the v9.8 system on five fresh companies (none previously tested):
+Recent benchmark batches in [`docs/benchmarks/`](docs/benchmarks/). The most recent batch validated the system on five fresh companies (none previously tested):
 
 | Company | Tier | Confidence | Source-anchored | SE-ready |
 |---|---|---:|---:|:-:|
@@ -356,9 +356,9 @@ Entity-resolution refusals also tracked: gibberish (`asdfqwerty`) refused in 0.6
 
 ## Known limitations
 
-- **Precedent corpus is closed (~2,150 deployments).** Every `inspired_by` reference points to `data/genai_usecases.db`. Free-text peer references are allowed (with the v6 quantitative-attribution rule), but the de-risking signal lives in the corpus.
-- **Tier-2 corroborated rescues use regex anchor matching.** Source-judge (v9) is the corrective layer; if the judge call fails (transient API), the system fails open and keeps the corroboration.
-- **v9.2 inference-from-context is a heuristic.** The judge accepts geographic logic like "Paris HQ → EU regulatory alignment." Usually right; occasionally over-permissive.
+- **Precedent corpus is closed (~2,150 deployments).** Every `inspired_by` reference points to `data/genai_usecases.db`. Free-text peer references are allowed (with the quantitative-attribution rule), but the de-risking signal lives in the corpus.
+- **Tier-2 corroborated rescues use regex anchor matching.** Source-judge is the corrective layer; if the judge call fails (transient API), the system fails open and keeps the corroboration.
+- **Inference-from-context is a heuristic.** The judge accepts geographic logic like "Paris HQ → EU regulatory alignment." Usually right; occasionally over-permissive.
 
 ## What I'd add with more time
 
@@ -378,7 +378,7 @@ The pipeline design draws on several public references:
 - **Workflow-not-agent decomposition** — Anthropic's [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) post argues that explicit prompt-chain workflows beat agentic loops for predictable customer-facing tasks. Every step in this pipeline is a deterministic activity; the only runtime branching is tier-based. The motivation: predictability and replay-safety matter more than autonomous reasoning loops when the output is a customer-ready report.
 - **Orchestrator-worker pattern** — same Anthropic post. The Mistral Workflows class is the orchestrator (pure routing, deterministic, replay-safe), and every LLM call lives in a worker activity with an explicit `start_to_close_timeout`. This maps directly onto the Workflows SDK's determinism contract — no `datetime.now()`, no `random()`, no I/O in the workflow class.
 - **Retrieval-augmented generation (RAG) over a closed corpus** — the precedent corpus draws from Google Cloud's [101 real-world GenAI use cases](https://cloud.google.com/transform/101-real-world-generative-ai-use-cases-from-industry-leaders) and Evidently AI's [LLM blueprints](https://www.evidentlyai.com/llm-blueprints). Both are public catalogs of "what's actually shipped in production." Dense retrieval (cosine over `mistral-embed` embeddings) + **Maximal Marginal Relevance (MMR)** re-ranking — not over the open web — so the proven-elsewhere signal is grounded in deployments that have demonstrably worked at scale, not in marketing material.
-- **LLM-as-judge with self-refinement** — the verification chain is a multi-stage **LLM-as-judge** cascade. The novel piece is the third `corrected` verdict (patch the prose with the source's actual value inline, rather than just flagging the claim) — an applied form of the **self-refine** pattern from [Madaan et al., 2023](https://arxiv.org/abs/2303.17651), but operating on already-cited claims rather than free generation. Designed during the v8 → v9 iteration as a response to the v8 over-rejection problem.
+- **LLM-as-judge with self-refinement** — the verification chain is a multi-stage **LLM-as-judge** cascade. The novel piece is the third `corrected` verdict (patch the prose with the source's actual value inline, rather than just flagging the claim) — an applied form of the **self-refine** pattern from [Madaan et al., 2023](https://arxiv.org/abs/2303.17651), but operating on already-cited claims rather than free generation. Designed in response to the meta-evaluator's tendency to over-reject claims that lacked an exact-text match in the evidence pool, even when the underlying claim was correct.
 - **Five-criteria rubric** — the union of GenAI use-case-prioritization frameworks from Gartner / McKinsey / Forrester. The "iconic potential" gate is a deliberate extension to keep generated cases visibly distinctive rather than boilerplate.
 
 ---
