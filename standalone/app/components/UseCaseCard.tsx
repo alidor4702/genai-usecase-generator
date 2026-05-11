@@ -315,7 +315,7 @@ export default function UseCaseCard({
 }) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
     description: false,
-    why: index === 0,
+    why: false,
     example: false,
     architecture: false,
     ttv: false,
@@ -426,7 +426,7 @@ export default function UseCaseCard({
           <Section k="description" title="Full description">
             <ProseMd content={description} />
           </Section>
-          <Section k="why" title="Why this company" defaultOpen>
+          <Section k="why" title="Why this company">
             <ProseMd content={uc.why_this_company || ""} />
           </Section>
           <Section k="example" title="Example interaction">
