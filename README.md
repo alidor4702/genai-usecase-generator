@@ -39,6 +39,8 @@ cp .env.example .env       # paste MISTRAL_API_KEY + TAVILY_API_KEY
 uv run python -m scripts.run_example "Carrefour" --out docs/examples/local/carrefour.md
 ```
 
+**4. Design notes (Notion):** [`Compastral on Notion`](https://chain-clematis-81c.notion.site/Compastral-35d96a880d7580a4ae3ce4cbec3212fa) — two-section walkthrough (for everyone / for engineers) covering the problem, the pipeline, and the five key design decisions with reasoning.
+
 ## What good output looks like
 
 For Carrefour (v9.8, latest batches in [`docs/benchmarks/v9_4/`](docs/benchmarks/v9_4) through [`docs/benchmarks/v9_9/`](docs/benchmarks/v9_9)):
