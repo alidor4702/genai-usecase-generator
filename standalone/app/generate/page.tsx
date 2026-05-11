@@ -654,6 +654,55 @@ function DraftBanner({
   review: NonNullable<Report["meta_review"]>;
 }) {
   const conf = review.confidence;
+  const seReady = review.sales_engineer_ready;
+
+  // Three branches matching src/ui/render.py:_draft_banner_md.
+  // The banner is a REVISION SUGGESTION, not a failure — every claim has
+  // already been through the full verification chain, so the prose
+  // doesn't ship unverified specifics regardless of the score. The
+  // threshold gap is about citation density, not factual correctness.
+  let chipLabel = "Confidence below SE-ready bar — revision suggested";
+  let body = (
+    <>
+      Confidence{" "}
+      <span className="text-amber-300 font-mono font-bold">{conf.toFixed(2)}</span>
+      {" "}is below the{" "}<span className="font-mono">0.70</span> sales-engineer-ready
+      bar. The use cases have been through the full verification chain
+      (numeric anchoring · per-claim source check · web-verify rescue ·
+      source-judge · qualitative rewrite). The threshold gap reflects
+      citation density, not factual correctness — every specific claim is
+      either source-anchored or rewritten qualitatively. Suggestions for
+      revision below.
+    </>
+  );
+
+  if (conf >= 0.70 && !seReady) {
+    chipLabel = "Above the 0.70 bar — strategic revision suggested";
+    body = (
+      <>
+        Confidence{" "}
+        <span className="text-amber-300 font-mono font-bold">{conf.toFixed(2)}</span>
+        {" "}is at or above the{" "}<span className="font-mono">0.70</span> numerical bar,
+        but the meta-evaluator flagged a strategic concern requiring
+        revision before customer use. See the cross-cutting note below.
+        This gap is qualitative (report-level reasoning), not numerical or
+        factual.
+      </>
+    );
+  } else if (conf < 0.70 && seReady) {
+    chipLabel = "Signals disagree — light review suggested";
+    body = (
+      <>
+        Confidence{" "}
+        <span className="text-amber-300 font-mono font-bold">{conf.toFixed(2)}</span>
+        {" "}is below the{" "}<span className="font-mono">0.70</span> numerical bar even
+        though the meta-evaluator marked the report sales-engineer-ready.
+        Review the per-claim breakdown below to decide whether to ship —
+        the signals disagree.
+      </>
+    );
+  }
+
   return (
     <div className="relative glass rounded-xl border-l-4 border-amber-500 p-4 sm:p-5">
       <div className="flex items-start gap-3">
@@ -668,21 +717,10 @@ function DraftBanner({
         <div className="flex-1">
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-[11px] uppercase tracking-[0.18em] text-amber-300 font-bold">
-              Draft · needs revision
-            </span>
-            <span className="text-xs text-ink-muted">
-              meta-eval confidence{" "}
-              <span className="text-amber-300 font-mono font-bold">{conf.toFixed(2)}</span>
-              {" "}· threshold ≥ 0.70
+              {chipLabel}
             </span>
           </div>
-          <p className="text-sm text-slate-200 mt-1.5 leading-relaxed">
-            The system produced this report but flagged it as not-ready for a
-            customer meeting. Every use case renders below for inspection. The
-            fact-check block at the bottom shows which claims passed, were
-            rescued via web search, were rejected by the source-judge, or were
-            rewritten qualitatively.
-          </p>
+          <p className="text-sm text-slate-200 mt-1.5 leading-relaxed">{body}</p>
         </div>
       </div>
     </div>

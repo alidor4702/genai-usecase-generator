@@ -126,7 +126,7 @@ def _build_quality_pie(quality_md: str, fact_check: dict[str, int]) -> PieChart 
     ]
     # Drop zero-count slices for cleanliness
     data = [d for d in data if d["value"] > 0]
-    return PieChart(data=data, title="Fact-check breakdown")
+    return PieChart(data=data, title="Claim source-anchoring breakdown")
 
 
 def build_report_component_tree(

@@ -372,7 +372,7 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
         failed = [c for c in in_scope if not c.passed]
         rewritten = [c for c in signals.fact_check if c.qualified_out]
         lines.append("")
-        lines.append("### Fact-check detail (per claim)")
+        lines.append("### Per-claim source-anchoring detail")
         lines.append("")
         if failed:
             lines.append(
