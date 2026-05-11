@@ -99,7 +99,7 @@ export default function Landing() {
 
         <footer className="text-center text-sm text-ink-muted py-8 border-t border-mistral-border">
           <p>
-            Built for the Mistral Proto Team Applied AI Engineer take-home ·
+            Compastral · 2026 ·
             <a
               href="https://github.com/alidor4702/genai-usecase-generator"
               target="_blank"

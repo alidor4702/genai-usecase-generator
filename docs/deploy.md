@@ -61,7 +61,7 @@ Then `cd standalone && API_URL=http://localhost:8000 npm run dev`.
 | Mistral Workflows worker (`src/workflow.py`) | Mistral AI Studio | Workers register with the Mistral runtime via `mistralai workflows register`; not deployed by us |
 | SQLite data layer (`data/genai_usecases.db`) | Render container | Persistent across requests within a single container; production migration path is Postgres + pgvector |
 
-## Production hardening (out of scope for the take-home)
+## Production hardening (out of scope for this MVP)
 
 - Tighten CORS origins in `src/api.py` to the actual Vercel URL
 - Replace in-memory `_runs` dict with Redis for multi-worker scaling

@@ -86,7 +86,7 @@ policy. Identical across tiers.
 ## Activity-level timeouts (`start_to_close_timeout`)
 
 Wraps the whole activity (including all internal sub-calls + retries the
-runtime injects). Per CLAUDE.md spec.
+runtime injects).
 
 | Activity | Timeout | Source |
 |---|---|---|

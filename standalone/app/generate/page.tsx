@@ -211,7 +211,7 @@ function Hero({
   const subtitle: Record<Phase, string> = {
     form: "Three customer-ready GenAI use cases for any company. Grounded in 2,150+ real peer deployments. Built on Mistral Workflows.",
     running: "The pipeline is running — every agent action streams live below.",
-    completed: "Three customer-ready proposals, scored against the Mistral Proto Team rubric.",
+    completed: "Three customer-ready proposals, scored against the five-criteria rubric.",
     refused: "Research signal was too sparse to confidently proceed.",
     failed: "Something went wrong. The trace log below has the details.",
   };

@@ -16,9 +16,9 @@
 
 ## What this is
 
-Take-home for the **Mistral Proto Team Applied AI Engineer** role. Goal: take a company name, return three relevant, iconic, high-impact GenAI use cases. The system runs on Mistral Workflows, publishes to Le Chat as an assistant, and ships a polished standalone web app with live agent activity, structured cards, run history, and a grounding-data explorer.
+Take a company name, return three relevant, iconic, high-impact GenAI use cases for that company. The system runs on Mistral Workflows, publishes to Le Chat as an assistant, and ships a polished standalone web app with live agent activity, structured cards, run history, and a grounding-data explorer.
 
-The Mistral team's evaluation criteria — methodology, architecture, code quality, documentation, output quality — are listed in [`CLAUDE.md`](CLAUDE.md). Every commit was made with those in mind.
+Every use case is grounded in a closed corpus of ~2,150 real production deployments and fact-checked against the live web through a five-layer verification chain that self-corrects on contradictions before the report renders.
 
 ## Try it
 
@@ -29,7 +29,6 @@ The Mistral team's evaluation criteria — methodology, architecture, code quali
 **2. Le Chat assistant:**
 - **Direct link**: [`https://chat.mistral.ai/chat?workflow-version-id=019e0a06-e2f9-75a7-b0ca-c33aa6c4f3ba`](https://chat.mistral.ai/chat?workflow-version-id=019e0a06-e2f9-75a7-b0ca-c33aa6c4f3ba) — click to open Le Chat with the **GenAI Use Case Generator** workflow pre-loaded. Type a company name (`Apple`, `Carrefour`, `Hermes`…) — entity resolution canonicalises the input upfront, the full pipeline runs (~2-4 min on standard tier) with live progress, and the final report renders inline with structured cards + mermaid blueprints.
 - Alternative: `chat.mistral.ai` → Assistants → search **"GenAI Use Case Generator"** → Install → chat.
-- See [`docs/publish_le_chat.md`](docs/publish_le_chat.md) for publish steps.
 
 **3. Locally (CLI):**
 ```bash
@@ -113,6 +112,22 @@ Five scoring criteria with configurable weights:
 3. **Refusal as a feature** — when research signal is too sparse to confidently generate, the system refuses gracefully and asks for more context, never fabricates.
 
 Full methodology rationale in [`docs/methodology.md`](docs/methodology.md).
+
+## The precedent corpus
+
+The retrieval layer runs against a closed corpus of **~2,150 GenAI deployments that have shipped in production**. The corpus is the union of three public sources:
+
+| Source | Approx. count | What it gives us |
+|---|---:|---|
+| **Google Cloud customer stories** — [101 real-world GenAI use cases](https://cloud.google.com/transform/101-real-world-generative-ai-use-cases-from-industry-leaders) and the broader [customer stories catalog](https://cloud.google.com/customers) | ~1,400 | Each entry has company, industry, use case description, business outcome, and at least one direct quote from the customer. This is the proven-at-scale anchor. |
+| **Evidently AI [LLM blueprints](https://www.evidentlyai.com/llm-blueprints)** | ~500 | Pattern-classified (RAG / agent / classification / extraction / generation) with reference architectures. Drives the `blueprint` mermaid diagram in each use case. |
+| **Google Cloud architecture blueprints** | ~250 | Canonical reference architectures from Google Cloud's solution catalog. Useful for the "how would this actually be wired up" half of the prose. |
+
+Every entry is embedded with `mistral-embed` once at build time, stored in `data/genai_usecases.db`, and retrieved via cosine + MMR diversity at query time. The retrieval step surfaces the top-k peer deployments for the target company *before* generation, so the generator grounds each candidate in "this has been shipped at scale at X" rather than inventing.
+
+The corpus is the **proven-elsewhere** half of the methodology: every `inspired_by` reference in an enriched use case points to a corpus entry. Free-text peer references are also allowed (with the v6 quantitative-attribution rule), but the de-risking signal lives here.
+
+Corpus build is in `scripts/build_data.py`; data-source breakdown in [`docs/data_sources.md`](docs/data_sources.md).
 
 ## The verification chain (how the v9.8 system anchors claims)
 
@@ -287,8 +302,6 @@ uv run python -m scripts.run_worker
 # leave running; assistant becomes invokable in Le Chat
 ```
 
-See [`docs/publish_le_chat.md`](docs/publish_le_chat.md) for the publish flow.
-
 ### Tests + lint
 ```bash
 uv run pytest tests/ -q
@@ -311,72 +324,6 @@ Two narrow places + a lot of live web. Full breakdown in [`docs/data_sources.md`
 
 The fact-check rescue chain (web-verify + source-judge) is **fully live web**, gated by the curated allowlist for tier-1 trust.
 
-## Repository layout
-
-```
-.
-├── README.md                       # this file
-├── pyproject.toml                  # deps, ruff, pyright config
-├── render.yaml                     # Render blueprint (api + worker)
-├── standalone/                     # Next.js 14 standalone web app
-│   ├── vercel.json
-│   └── app/
-│       ├── page.tsx                # / Landing (8-bit compass + typewriter)
-│       ├── generate/page.tsx       # /generate (form + live agent feed)
-│       ├── history/                # /history + /history/[runId]
-│       ├── grounding/[runId]/      # /grounding/[runId]
-│       ├── how-it-works/page.tsx   # non-technical explainer
-│       ├── architecture/page.tsx   # technical reference
-│       └── components/             # PhaseIcon, UseCaseCard, MermaidDiagram, …
-├── src/
-│   ├── workflow.py                 # InteractiveWorkflow class (deterministic)
-│   ├── api.py                      # FastAPI surface
-│   ├── activities/                 # one file per pipeline step
-│   │   ├── research.py             # research synthesis + gap-fill + Layer-2
-│   │   ├── retrieve.py
-│   │   ├── generate.py
-│   │   ├── score.py
-│   │   ├── verify_per_candidate.py
-│   │   ├── select_enrich.py        # selection + enrich + polish + attribution
-│   │   ├── meta_evaluate.py
-│   │   ├── web_verify.py           # 2-tier rescue
-│   │   ├── source_judge.py         # 3-verdict judge incl. corrected
-│   │   ├── final_qualify.py
-│   │   └── compute_signals.py
-│   ├── research/                   # Wikipedia, news, jobs, existing initiatives
-│   ├── ui/render.py                # markdown + components renderers
-│   ├── models.py                   # all Pydantic models
-│   ├── criteria.py                 # five criteria + default weights
-│   ├── prompts.py                  # GENERATION/SCORING/VERIFICATION/ENRICHMENT/META prompts
-│   ├── precedents.py               # corpus loading + retrieval (cosine + MMR)
-│   ├── db.py                       # SQLite layer (cache + precedents + companies + runs)
-│   ├── cache.py
-│   └── web_verify.py               # credibility classifier (allowlist + anchor)
-├── docs/
-│   ├── methodology.md
-│   ├── architecture.md
-│   ├── prompts.md                  # all 16 live prompts (regenerated from code)
-│   ├── data_sources.md             # PRESET vs LIVE WEB classification
-│   ├── explainer.md                # plain-English pipeline walkthrough
-│   ├── publish_le_chat.md
-│   ├── deploy.md
-│   └── examples/                   # v1 → v9.1 example outputs (5 companies each)
-├── data/
-│   ├── genai_usecases.db           # 50 MB, prebuilt corpus
-│   ├── companies_raw.jsonl
-│   └── raw/                        # raw inputs for build scripts
-├── tests/
-│   ├── test_models.py
-│   ├── test_criteria.py
-│   ├── test_quality_signals.py
-│   └── …
-└── scripts/
-    ├── run_example.py              # CLI entry point
-    ├── run_worker.py               # registers workflow with Mistral runtime
-    ├── build_data.py               # corpus build (gcloud + evidently + wikidata + embed)
-    └── …
-```
-
 ## Cost characteristics
 
 Per run, at `tier=standard`:
@@ -389,24 +336,25 @@ Total ~$0.20-0.30 per run.
 
 ## Quality and evaluation
 
-Five-company canonical benchmark (Carrefour, Veolia, BNP Paribas, L'Oréal, Mistral AI), tracked across versions in [`docs/examples/`](docs/examples). Each version's outputs are committed alongside their execution traces (`*_trace.md`) and grounding addenda (`*_grounding.md`).
+Recent benchmark batches in [`docs/benchmarks/`](docs/benchmarks/). The v9.9 batch validated the v9.8 system on five fresh companies (none previously tested):
 
-Latest batches (v9.8 + v9.9, 22 runs across 16 fresh companies + 2 refusal cases):
-- **Hermès** (standard, 0.79 / 94% source-anchored) — best-case all-time on a luxury / artisan-heritage brand
-- **L'Oréal** (standard run 3, **0.88 / 88%** ✓ SE-ready since the bar is now 0.80)
-- **Carrefour** (standard, 0.68 / 83% — solid; the chain caught a `50+ proprietary brands` → `just under 30` correction inline)
-- **BNP Paribas** (standard, 0.85 / 100%) — every substantive claim source-anchored
-- **Entity resolution refusals** — `asdfqwerty` rejected in 0.6s, `ZYX Corporation` in 2.0s, before any pipeline LLM work
-- **Apple** scores low (0.35) — diagnosed as research-density limit (Apple is famously secretive); the system is honest about what it can/can't source rather than fabricating
+| Company | Tier | Confidence | Source-anchored | SE-ready |
+|---|---|---:|---:|:-:|
+| Roche | max | 0.96 | 96% | ✓ |
+| TotalEnergies | standard | 0.92 | 92% | ✓ |
+| ASML | fast | 0.87 | 90% | ✓ |
+| Adidas | standard | 0.86 | 76% | ✓ |
+| IKEA | fast | 0.79 | 79% | ✓ |
 
-Quality signals computed per run: LLM-graded diversity, LLM-graded specificity per use case, Mistral product diversity, fact-check pass rate, TTV/cost-tier spread, source coverage. All visible in the report's quality footer.
+Quality signals computed per run: LLM-graded diversity, LLM-graded specificity per use case, Mistral product diversity, fact-check pass rate, TTV / cost-tier spread, source coverage. All visible in the report's quality footer.
+
+Entity-resolution refusals also tracked: gibberish (`asdfqwerty`) refused in 0.6s, ambiguous names (`ZYX Corporation`) refused in 2.0s — both before any pipeline LLM work runs.
 
 ## Known limitations
 
-- **AI-vendor-as-target produces tautological proposals.** When the target IS Mistral / OpenAI / Anthropic, the framing breaks down. Documented; would need a prompt branch to address.
-- **Precedent corpus is closed (~2,150 deployments).** Every `inspired_by` reference must live in `data/genai_usecases.db`. Free-text peer references are allowed (with the v6 quantitative-attribution rule).
-- **Tier-2 corroborated rescues use regex anchor matching.** v9 source-judge is the corrective layer; if the LLM judge call fails (transient API error), the system fails open and keeps the corroboration.
-- **v9.2 inference-from-context is a heuristic.** The judge accepts "Paris HQ" → "EU regulatory alignment" via geographic logic. Most of the time this is right; occasionally over-permissive.
+- **Precedent corpus is closed (~2,150 deployments).** Every `inspired_by` reference points to `data/genai_usecases.db`. Free-text peer references are allowed (with the v6 quantitative-attribution rule), but the de-risking signal lives in the corpus.
+- **Tier-2 corroborated rescues use regex anchor matching.** Source-judge (v9) is the corrective layer; if the judge call fails (transient API), the system fails open and keeps the corroboration.
+- **v9.2 inference-from-context is a heuristic.** The judge accepts geographic logic like "Paris HQ → EU regulatory alignment." Usually right; occasionally over-permissive.
 
 ## What I'd add with more time
 
@@ -418,20 +366,17 @@ Quality signals computed per run: LLM-graded diversity, LLM-graded specificity p
 - **Production migration.** Postgres + pgvector for embeddings, Redis for cache. Same code paths, different connection strings.
 - **Active corpus expansion.** When a generated use case is judged high-quality, write it back to the precedent corpus.
 
-## Prior work
+## References
 
-The methodology builds on a few canonical references:
-- The "proven-elsewhere vs already-done-here" distinction is core to applied-AI use-case discovery.
-- The five-criteria rubric is the union of standard "GenAI use case prioritization" frameworks (Gartner / McKinsey / Forrester).
-- Self-consistency in scoring is from [Wang et al. 2022](https://arxiv.org/abs/2203.11171).
-- The corrected-verdict pattern (replace contradicted values with source values inline) is novel here, IIRC — it was designed in the v8→v9 conversation as a response to the v8 over-rejection problem.
+The pipeline design draws on several public references:
 
-## Submission notes
-
-This take-home was built over [~7 days of iterative work](https://github.com/alidor4702/genai-usecase-generator/commits/main). The full timeline is visible in the git log; major milestones tagged in commit messages (v6 / v6 audit / v7 / v7.1 / v8 / v9 / v9.1 / v9.2). All 9 versions of the 5-company canonical batch are committed under `docs/examples/v*/` so reviewers can read the actual generated reports + execution traces + grounding addenda without running anything.
-
-For questions: alidor4702@gmail.com.
+- **Self-consistency for scoring** — [Wang et al., 2022](https://arxiv.org/abs/2203.11171). Scoring runs two passes at T=0.2 and T=0.4 and averages — trades ~18s of latency for measurable noise reduction on per-criterion scores. Originally a chain-of-thought decoding trick for arithmetic and reasoning benchmarks; applied here to LLM-as-judge scoring.
+- **Workflow-not-agent decomposition** — Anthropic's [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) post argues that explicit prompt-chain workflows beat agentic loops for predictable customer-facing tasks. Every step in this pipeline is a deterministic activity; the only runtime branching is tier-based. The motivation: predictability and replay-safety matter more than autonomous reasoning loops when the output is a customer-ready report.
+- **Orchestrator-worker pattern** — same Anthropic post. The Mistral Workflows class is the orchestrator (pure routing, deterministic, replay-safe), and every LLM call lives in a worker activity with an explicit `start_to_close_timeout`. This maps directly onto the Workflows SDK's determinism contract — no `datetime.now()`, no `random()`, no I/O in the workflow class.
+- **Grounded generation over a closed corpus** — the precedent corpus draws from Google Cloud's [101 real-world GenAI use cases](https://cloud.google.com/transform/101-real-world-generative-ai-use-cases-from-industry-leaders) and Evidently AI's [LLM blueprints](https://www.evidentlyai.com/llm-blueprints). Both are public catalogs of "what's actually shipped in production." Retrieval is cosine + MMR over these (not over the open web) so the proven-elsewhere signal is grounded in deployments that have demonstrably worked at scale, not in marketing material.
+- **Self-correcting `corrected` verdict** — the v9 judge verdict (patch the prose with the source's actual value inline, rather than just flagging the claim) is adjacent to retrieval-correction loops in the RAG literature, but applied at the meta-eval layer after generation. Designed during the v8 → v9 iteration as a response to the v8 over-rejection problem.
+- **Five-criteria rubric** — the union of GenAI use-case-prioritization frameworks from Gartner / McKinsey / Forrester. The "iconic potential" gate is a deliberate extension to keep generated cases visibly distinctive rather than boilerplate.
 
 ---
 
-<sub>Built for the Mistral Proto Team Applied AI Engineer take-home · 2026 · Compastral 🧭</sub>
+<sub>Compastral · 2026 🧭</sub>

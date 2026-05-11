@@ -155,7 +155,7 @@ Implemented as a `FormInput` exposed via `wait_for_input`. The form has two fiel
 
 Skipping the form is fine — the workflow proceeds with defaults. Adjusting it is for power users.
 
-This step exists because Proto Team customer engagements always have a scope conversation early. Including it in the workflow mirrors the real engagement.
+This step exists because applied-AI customer engagements always have a scope conversation early. Including it in the workflow mirrors the real engagement.
 
 ### Step 1: Research (parallel)
 
@@ -359,7 +359,7 @@ The Mistral Workflows SDK ships a `CanvasInput` primitive that lets the user edi
 
 This is a low-effort, high-impact addition for the post-MVP version: after producing the report, the workflow could pause and let the user push back on any of the three use cases — "use case 2 doesn't fit our regulatory environment, regenerate it" — and trigger a targeted regeneration of just that one use case. This is exactly the human-in-the-loop refinement pattern, as a built-in primitive rather than a custom UI build.
 
-For the take-home MVP this is documented as a planned enhancement (see "What I'd add with more time" in the README) rather than scoped in. The primitive exists; we'd plug it in if we had a few extra days.
+For this MVP it is documented as a planned enhancement (see "What I'd add with more time" in the README) rather than scoped in. The primitive exists; it would plug in cleanly with another iteration.
 
 ### Tool UI States — deliberately not used
 

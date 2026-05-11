@@ -2,7 +2,7 @@
 
 ## What this system does
 
-This system takes a company name as input and produces a structured report of three GenAI use cases that are, for that specific company, relevant, iconic, and high-impact. It is intended as the kind of artifact a Mistral Proto Team applied AI engineer would produce in the early scoping phase of a customer engagement.
+This system takes a company name as input and produces a structured report of three GenAI use cases that are, for that specific company, relevant, iconic, and high-impact. It is intended as the kind of artifact an applied AI engineer would produce in the early scoping phase of a customer engagement.
 
 ## Design philosophy
 
