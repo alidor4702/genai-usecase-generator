@@ -280,11 +280,11 @@ function FormView({
   };
   return (
     <div className="relative">
-      {/* Mistral cat-M crest — only shows for "Mistral" / "Mistral AI",
-          positioned ABOVE the panel so it reads like a brand mark
-          emerging from it. Lives in this relative wrapper (not inside
-          the panel) because the panel uses overflow-hidden for its
-          gradient bloom and would clip the glyph otherwise. */}
+      {/* Mistral pixel-M badge — only shows for "Mistral" / "Mistral AI",
+          anchored to the top-right of the panel and fades in (no slide).
+          Lives in this relative wrapper (not inside the panel) because
+          the panel uses overflow-hidden for its gradient bloom and would
+          clip the glyph otherwise. */}
       <CompanyGlyph name={companyName} />
       <section className="relative glass rounded-3xl p-6 sm:p-10 space-y-7 slide-in overflow-hidden">
       <div

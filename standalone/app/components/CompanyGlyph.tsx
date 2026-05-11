@@ -1,49 +1,39 @@
 "use client";
 
 /**
- * CompanyGlyph — only fires for Mistral AI. Renders the cat-ear M
- * pixel-art mark above the input panel as a "watermark crest" so the
- * panel reads like the brand surface itself when the recognised name
- * is typed. Other companies don't get a glyph: the v9.x guidance is
- * that brand-marking should be a soft Easter-egg for the home brand,
- * not a per-customer logo lookup.
+ * CompanyGlyph — only fires for Mistral AI. Renders the Mistral pixel-M
+ * mark as a small badge anchored to the top-right of the input panel.
+ * Pure opacity fade — no movement once it lands. Other companies don't
+ * get a glyph: brand-marking is a soft Easter-egg for the home brand.
  */
 
 import { useMemo } from "react";
 
-function MistralCatM({ size }: { size: number }) {
+function MistralM({ size }: { size: number }) {
+  // 10×5 pixel grid — two tall pillars + a wide bottom bar with two
+  // dark notches that read as the M's valley/feet.
+  const pixels: Array<[number, number]> = [
+    [1, 0], [2, 0], [7, 0], [8, 0],
+    [1, 1], [2, 1], [7, 1], [8, 1],
+    [1, 2], [2, 2], [7, 2], [8, 2],
+    [1, 3], [2, 3], [7, 3], [8, 3],
+    [0, 4], [1, 4], [2, 4], [4, 4], [5, 4], [7, 4], [8, 4], [9, 4],
+  ];
   return (
     <span
-      className="inline-flex items-center justify-center bg-gradient-to-br from-mistral-orange to-mistral-orangeBright shadow-xl shadow-mistral-orange/40 ring-2 ring-mistral-orange/20"
-      style={{ width: size, height: size, borderRadius: 10 }}
+      className="inline-flex items-center justify-center bg-[#1a1a1a] shadow-lg ring-1 ring-white/5"
+      style={{ width: size, height: size, borderRadius: 8 }}
       aria-hidden
     >
       <svg
-        width={size - 12}
-        height={size - 12}
-        viewBox="0 0 16 16"
+        width={size * 0.66}
+        height={size * 0.4}
+        viewBox="0 0 10 5"
         shapeRendering="crispEdges"
         preserveAspectRatio="xMidYMid meet"
       >
-        {[
-          // ears
-          [2, 1], [3, 1], [12, 1], [13, 1],
-          [2, 2], [3, 2], [12, 2], [13, 2],
-          // top bars (the M)
-          [1, 4], [2, 4], [3, 4], [4, 4], [5, 4],
-          [10, 4], [11, 4], [12, 4], [13, 4], [14, 4],
-          [1, 5], [2, 5], [13, 5], [14, 5],
-          // arches sloping inward
-          [1, 6], [2, 6], [4, 6], [5, 6], [10, 6], [11, 6], [13, 6], [14, 6],
-          [1, 7], [2, 7], [4, 7], [5, 7], [10, 7], [11, 7], [13, 7], [14, 7],
-          [1, 8], [2, 8], [4, 8], [5, 8], [7, 8], [8, 8], [10, 8], [11, 8], [13, 8], [14, 8],
-          [1, 9], [2, 9], [4, 9], [5, 9], [7, 9], [8, 9], [10, 9], [11, 9], [13, 9], [14, 9],
-          [1, 10], [2, 10], [4, 10], [5, 10], [7, 10], [8, 10], [10, 10], [11, 10], [13, 10], [14, 10],
-          // base feet
-          [1, 12], [2, 12], [4, 12], [5, 12], [7, 12], [8, 12], [10, 12], [11, 12], [13, 12], [14, 12],
-          [1, 13], [2, 13], [4, 13], [5, 13], [7, 13], [8, 13], [10, 13], [11, 13], [13, 13], [14, 13],
-        ].map(([x, y]) => (
-          <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill="white" />
+        {pixels.map(([x, y]) => (
+          <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill="#fafafa" />
         ))}
       </svg>
     </span>
@@ -53,26 +43,18 @@ function MistralCatM({ size }: { size: number }) {
 const MISTRAL_RX = /^\s*mistral(\s*ai)?\s*$/i;
 
 /**
- * Renders the Mistral cat-M crest centered ABOVE the input panel.
- * Use as a sibling that sits half-overlapping the panel via negative
- * margin: the parent should style it like a brand mark "emerging from"
- * the panel.
- *
- * Layout pattern in the parent:
- *   <div className="relative">
- *     <CompanyGlyph name={companyName} />   {/* absolutely positioned to top *\/}
- *     <div className="panel">…</div>
- *   </div>
+ * Anchored to the top-right of the input panel via the parent's
+ * `relative` wrapper. Pure opacity fade-in (no translate).
  */
-export default function CompanyGlyph({ name, size = 64 }: { name: string; size?: number }) {
+export default function CompanyGlyph({ name, size = 56 }: { name: string; size?: number }) {
   const matches = useMemo(() => MISTRAL_RX.test(name), [name]);
   if (!matches) return null;
   return (
     <div
-      className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 z-10 transition-all duration-300 animate-[slideIn_0.3s_cubic-bezier(0.16,1,0.3,1)]"
-      title="Mistral AI — home turf"
+      className="pointer-events-none absolute right-6 top-6 z-10 animate-[fadeIn_400ms_ease-out_both]"
+      title="Mistral AI"
     >
-      <MistralCatM size={size} />
+      <MistralM size={size} />
     </div>
   );
 }

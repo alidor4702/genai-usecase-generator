@@ -24,7 +24,7 @@ Every use case is grounded in a closed corpus of ~2,150 real production deployme
 
 **1. Standalone web app (Vercel + Render):**
 - Live URL: [`https://compastral.vercel.app`](https://compastral.vercel.app)
-- Type a company name (try `Carrefour` for the cleanest sample, `Mistral AI` to see the cat-ear logo Easter egg). Watch the live agent feed, get a structured report with grounding chips.
+- Type a company name (try `Carrefour` for the cleanest sample, `Mistral AI` to see the pixel-M brand badge Easter egg). Watch the live agent feed, get a structured report with grounding chips.
 
 **2. Le Chat assistant:**
 - **Direct link**: [`https://chat.mistral.ai/chat?workflow-version-id=019e0a06-e2f9-75a7-b0ca-c33aa6c4f3ba`](https://chat.mistral.ai/chat?workflow-version-id=019e0a06-e2f9-75a7-b0ca-c33aa6c4f3ba) — click to open Le Chat with the **GenAI Use Case Generator** workflow pre-loaded. Type a company name (`Apple`, `Carrefour`, `Hermes`…) — entity resolution canonicalises the input upfront, the full pipeline runs (~2-4 min on standard tier) with live progress, and the final report renders inline with structured cards + mermaid blueprints.
@@ -52,7 +52,7 @@ For Carrefour (v9.8, latest batches in [`docs/benchmarks/v9_4/`](docs/benchmarks
   3. *Supplier-ESG risk-scoring agent on Carrefour's 50k-supplier base*
 - Each with: refined description, why-this-company, example user query + system output, blueprint mermaid (color-coded by pattern), TTV estimate (precedent-anchored or honestly tagged "ballpark"), top implementation risk, Mistral product picks, citations linked to a per-run grounding database.
 
-![Generate page — Mistral cat-M crest above the input panel, focus area selector, advanced criteria weights](docs/img/generate.png)
+![Generate page — Mistral pixel-M badge anchored to the top-right of the input panel, focus area selector, advanced criteria weights](docs/img/generate.png)
 
 ## The system at a glance
 
