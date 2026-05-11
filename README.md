@@ -114,42 +114,29 @@ Five scoring criteria with configurable weights:
 
 Full methodology rationale in [`docs/methodology.md`](docs/methodology.md).
 
-## The fact-check chain (the v6→v9.2 evolution)
+## The verification chain (how the v9.8 system anchors claims)
 
-The most distinctive thing about this build is what happens AFTER the LLM produces the prose. Every iteration sharpened it.
-
-| Version | What changed | Why |
-|---|---|---|
-| **v5** | Baseline: meta-eval reads evidence pool, marks claims supported/unsupported | ~80% pass rate but fact-checker was too narrow — flagged real claims as fabricated |
-| **v6** | **Web-verify rescue layer** — for unsupported claims, run one targeted Tavily search; 2-tier credibility (allowlist domain → "verified", entity/number anchor → "corroborated"). + 5 prompt fixes (atomic claim splitting, polish gets full ledger, `free_text_notes` priority, peer-attribution rule, TTV ballpark tag). | Caught real claims meta-eval missed. Pass rates jumped to ~95%. Confidence math broken (capped at 0.65). |
-| **v7** | **Source-judge layer** — Mistral Small reads each (claim, source URL) pair and decides if the source actually supports the claim vs. just mentions related entities. **Final-qualify** — surgical rewrite of still-unsupported numerics. **Numbers symmetry** — polish stops pre-stripping; verify chain decides. | Caught false positives (wrong-source citations) the v6 rescue was rubber-stamping. |
-| **v8** | Pass-rate denominator excludes qualified-out claims. Confidence calibration clamps `qual_delta ∈ [-0.15, +0.10]`. Veolia near-dup rendering bug. Peer-attribution rule strengthened to anonymous peers. | Made the headline metric reflect what the prose actually asserts; fixed Mistral 91% pass / 0.55 confidence inversion. |
-| **v9** | **Self-correcting judge** — third verdict `corrected`. When source contradicts a numeric/rank/temporal claim with a clean replacement, the judge returns the corrected value as a drop-in phrase; the system patches the prose inline + attaches the source link + marks the claim with a `[corrected ↗ → <value>]` chip. Restricted to numerics (entity contradictions stay unsupported — silent entity-substitution would break downstream prose). + drop regen_one (~50s saved), parallelize verify deep-read, source_judge concurrency 4→8. | Closes the loop: real fabrications get rewritten with the actual value, not just qualified out. |
-| **v9.1** | Phantom-claim post-process strip (LLM was copying prompt template literals as claims). Feature-description filter strengthened with "Acme Corp swap test". Source-judge extends to all supported claims (was URL-only). | Removed extraction noise. Catches the L'Oreal Galderma slip-through (supporting quote didn't actually mention the brands). |
-| **v9.2** | Two surgical prompt edits — judge accepts inference-from-context (Paris HQ → EU regulatory alignment); generation prompt blocks superlatives ("ONLY EU-sovereign") via the existing peer-attribution rule. | Recovers reasonable inferences without adding new logic; closes a generation-prompt gap. |
-| **v9.4-v9.6** | 28-run heavy batch + targeted A/B tests. **Bracket / fake (ev-XXX) cleanup pass.** **Refusal gate hardened to 2-of-3 signals.** **Polish prompt rewritten** to require exact entity-AND-figure match before attaching a citation. **Deep-read content bumps** (3K→6K, 6K→10K, 8K→12K). Banner UX 3-way branched. | Fixed the fast > standard regression on Spotify/Hermès/Bouygues caused by polish over-zealously adding marginal citations the judge then rejected. |
-| **v9.7** | **Generate + enrich prompt hardening** — no invented outcome percentages for the proposed system (`achieves 25-40% improvement` style claims). **Max tier insane mode** — polish on Mistral Large 3, second-pass critique-revise call, web_search budget 4→6, deep-read 12K→16K. | The #1 cause of judge-rejected claims across v9.4-v9.6 was the model writing specific outcome percentages with no source. Stopped at the source rather than cleaning up after. |
-| **v9.8** | **Upfront entity resolution** — one Mistral Small call resolves user input to a canonical company name BEFORE any research happens (`Apple` → `Apple Inc.`). Replaces the v9.5 rapidfuzz-WRatio heuristic that got fooled by substring matches (`Apple` ⊂ `Applegate`). Refuses gibberish/empty in <2s. **SE-ready bar bumped 0.70 → 0.80** with the meta-eval calibration anchors shifted upward. **INLINE LINK DENSITY rule** — enrich prompt asks for 2-3+ inline markdown links per use case. **"Fact-check" labels softened across the surface** — "Source-anchored claim ratio" / "Per-claim source-anchoring detail" / "Claim source-anchoring breakdown". | Entity resolution kills the entire class of "Wikipedia returned the wrong article" / "verified-index matched the wrong company" bugs at the top of the pipeline. The 0.80 bar with the new calibration aligns "above bar" with what a sales engineer would actually ship. |
-
-End-to-end behavior:
+The most distinctive part of this build is what happens AFTER the LLM
+produces the prose. Every substantive claim runs the same gauntlet:
 
 ```
 Substantive claim from prose
     │
-    └── Anchored in evidence pool? ── yes ──→ supported (with source_kind=evidence:ev-id)
+    └── Anchored in evidence pool? ── yes ──→ supported (source_kind=evidence:ev-id)
                                   └── no  ──→ Web-verify Tavily search
                                                  │
                                                  └── Domain allowlisted? ──→ supported (rescue_tier=verified)
                                                  └── Entity/number anchor? → supported (rescue_tier=corroborated)
                                                  └── Nothing? ────────────→ unsupported
     │
-    Source-judge (v7+v9): for every supported claim with a resolvable URL OR
+    Source-judge: for every supported claim with a resolvable URL OR
     supporting_signal text, ask Mistral Small "does this source actually support?":
         ├── supported     → render with citation
         ├── corrected     → patch prose with source's actual value, add [corrected ↗] chip
         └── unsupported   → flip back, judge_rejected chip
     │
-    Final qualify: any still-unsupported numeric/named claim → surgical qualitative rewrite
+    Final qualify: any still-unsupported numeric/named claim → surgical
+                   qualitative rewrite
     │
     Pass-rate metric: excludes qualified_out (the prose no longer asserts them)
     Confidence: re-anchor on new pass-rate, qual_delta clamped [-0.15, +0.10]
@@ -157,7 +144,22 @@ Substantive claim from prose
     Persist Report to SQLite runs table → /history page can replay later
 ```
 
-Full chain visualised on the [`/architecture`](https://compastral.vercel.app/architecture) page.
+Three things this design enforces:
+
+- **Every numerical or named-entity claim has an explicit source URL** (or it's qualified out of the prose). The user sees `[verified ↗ Reuters]`, `[corrected ↗ → 56 countries]`, `[judge: rejected]`, or `[rewritten qualitatively]` chips in the per-claim transparency block.
+- **The judge catches false-positive citations** — a YouTube video titled "LVMH × AI" doesn't anchor a "LVMH reported 25% efficiency gain" claim, even though it contains the entity. Source-judge is the v7 gate that catches this class.
+- **The system self-corrects when sources contradict** — if the prose says "12 European languages" and the source says "9 European languages", the judge returns the corrected value as a drop-in phrase; the system patches the prose inline and marks the claim with a `[corrected ↗ → 9 European languages]` chip.
+
+**Sales-engineer-ready threshold: confidence ≥ 0.80**. Below 0.80 the
+banner suggests revision; the system never ships prose that asserts an
+unverified specific (those are rewritten qualitatively first).
+
+Full chain visualised on the [`/architecture`](https://compastral.vercel.app/architecture) page with clickable step detail.
+
+> The verification chain went through ten versions of iteration before
+> landing on this shape. The version-by-version history is in
+> [`docs/changelog.md`](docs/changelog.md) for anyone curious about *why*
+> each piece is the way it is.
 
 ## Tech stack
 
