@@ -29,6 +29,7 @@ from src.activities.meta_evaluate import meta_evaluate_activity
 from src.activities.source_judge import judge_claim_sources_activity
 from src.activities.web_verify import web_verify_unsupported_claims_activity
 from src.activities.research import (
+    compute_entity_match_score,
     enrich_company_context_activity,
     research_company_activity,
 )
@@ -43,6 +44,13 @@ from src.models import (
     WorkflowInput,
 )
 from src.trace import RunTrace, start_run_trace
+
+# Entity-identity threshold (Fix #4). Below this, the user's input doesn't
+# fuzzy-match what research found — likely drift to a wrong entity. Tuned
+# from v9.4 data: real companies (Tesla, Joe's Pizza, etc.) score ≥85;
+# drift cases (ZYX Corp → Zynex Medical, asdfqwerty → quantum paper, empty
+# input) score below 70.
+_ENTITY_MATCH_THRESHOLD = 70.0
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +90,31 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
         len(ledger.entries),
     )
 
+    # Step 1a — Entity-identity check (Fix #4 from v9.4 analysis).
+    # Refuse early when the user's input doesn't fuzzy-match the entity
+    # research actually found. Catches the drift cases the OR-gate below
+    # would miss because research populated `existing_ai_initiatives` for
+    # the wrong entity (e.g. empty input → SoundHound AI, "ZYX Corporation"
+    # → Zynex Medical). Failing here saves ~80-100s of wasted enrich +
+    # downstream work on a wrong-entity report.
+    entity_match_score = compute_entity_match_score(params.company_name, bundle)
+    log.info("entity_match_score=%.0f (threshold=%.0f)", entity_match_score, _ENTITY_MATCH_THRESHOLD)
+    if entity_match_score < _ENTITY_MATCH_THRESHOLD:
+        log.warning(
+            "Entity-identity refusal: input=%r research-found-entity is too different (score=%.0f)",
+            params.company_name, entity_match_score,
+        )
+        return PipelineResult(
+            refused=True,
+            report=None,
+            trace=trace,
+            ledger=ledger,
+            refusal_reason=(
+                f"Couldn't find a clear company match for {params.company_name!r}. "
+                f"Try the legal name or parent brand."
+            ),
+        )
+
     # Step 1b — Context completion (gap-fill). Pass the original bundle through
     # so re-synthesis uses the same depth signal instead of re-fetching at LOW.
     log.info("=== Step 1b: Context completion (gap-fill) ===")
@@ -95,14 +128,27 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
         len(ledger.entries),
     )
 
-    # Confidence gate — graceful refusal
+    # Confidence gate — hardened to require ≥ 2 of 3 signals (Fix #3 from
+    # v9.4 analysis). Was an OR of the three signals, which was too
+    # permissive: edge-case inputs would slip through whenever research
+    # happened to populate `existing_ai_initiatives` for an unrelated
+    # entity. The 2-of-3 rule plus the "very high confidence alone is fine"
+    # escape preserves all 24 real-company v9.4 runs (each had all 3
+    # signals true) while catching the drift cases.
+    confidence_signals = [
+        ctx.meta.research_confidence >= settings.research_confidence_threshold,
+        ctx.meta.is_verified,
+        len(ctx.existing_ai_initiatives) > 0,
+    ]
     confidence_ok = (
-        ctx.meta.research_confidence >= settings.research_confidence_threshold
-        or ctx.meta.is_verified
-        or len(ctx.existing_ai_initiatives) > 0
+        sum(confidence_signals) >= 2
+        or ctx.meta.research_confidence >= 0.80
     )
     if not confidence_ok:
-        log.warning("Refusal: research signal too sparse for %s", params.company_name)
+        log.warning(
+            "Refusal: research signal too sparse for %s (signals=%s, conf=%.2f)",
+            params.company_name, confidence_signals, ctx.meta.research_confidence,
+        )
         return PipelineResult(
             refused=True,
             report=None,

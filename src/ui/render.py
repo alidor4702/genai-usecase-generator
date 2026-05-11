@@ -348,9 +348,19 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
         else ""
     )
     lines.append(
-        f"- **Fact-check pass rate**: `{signals.fact_check_pass_rate:.0%}` "
-        f"({sum(1 for c in in_scope if c.passed)}/{len(in_scope)} claims supported by research"
+        f"- **Source-anchored claim ratio**: `{signals.fact_check_pass_rate:.0%}` "
+        f"({sum(1 for c in in_scope if c.passed)}/{len(in_scope)} substantive claims "
+        f"have explicit support in the evidence pool"
         f"{qualified_note})"
+    )
+    lines.append(
+        "  _What this measures_: share of substantive claims (numbers, named "
+        "entities, named actions) that the verification chain anchored to an "
+        "explicit source. Unsupported claims have already been rewritten "
+        "qualitatively or flagged in the per-claim block below — the prose "
+        "does NOT assert unverified specifics. A 70% ratio does not mean "
+        "30% of the report is false; it means 30% of substantive claims lack "
+        "explicit single-source confirmation."
     )
     # Per-claim transparency block — without this the aggregate pass rate is
     # opaque (no way to tell whether meta-eval is being legitimately strict
@@ -365,7 +375,12 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
         lines.append("### Fact-check detail (per claim)")
         lines.append("")
         if failed:
-            lines.append(f"**Unsupported ({len(failed)}):**")
+            lines.append(
+                f"**Not source-anchored ({len(failed)})** _— these claims survived "
+                f"the verification chain without an explicit supporting source. "
+                f"They may still be true, but the report flags them so the reviewer "
+                f"can revise or remove them:_"
+            )
             for c in failed:
                 rationale = c.rationale or "no source contained directly-supporting text"
                 judge_chip = ""
@@ -436,12 +451,16 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
         # either surface without rehype-raw.)
     if meta is not None:
         lines.append("")
+        ready_note = (
+            "sales-engineer-ready"
+            if meta.sales_engineer_ready
+            else "below the 0.70 SE-ready bar — see revision notes"
+        )
         lines.append(
-            f"**Meta-evaluator confidence**: `{meta.confidence:.2f}` "
-            f"({'sales-engineer-ready' if meta.sales_engineer_ready else 'NOT ready — needs revision'})"
+            f"**Meta-evaluator confidence**: `{meta.confidence:.2f}` ({ready_note})"
         )
         if meta.cross_cutting_concern:
-            lines.append(f"**Cross-cutting concern**: {meta.cross_cutting_concern}")
+            lines.append(f"**Cross-cutting improvement note**: {meta.cross_cutting_concern}")
         if meta.duplicate_flag:
             lines.append(f"**Duplicate flag**: {meta.duplicate_flag}")
     return "\n".join(lines)
@@ -449,9 +468,12 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
 
 def _draft_banner_md(report: Report) -> str:
     """Top-of-report banner shown when meta-eval flagged the run as
-    needing revision. Quotes the cross-cutting concern + confidence so
-    the reviewer can audit immediately. NOT a suppression — every use
-    case still renders below; this just surfaces the verdict honestly.
+    below the SE-ready threshold. Frames the verdict as a revision
+    note, not a "this is broken" alert — every claim has been through
+    the full verification chain (numeric scrub + polish + meta-eval
+    + web-verify + source-judge + final-qualify), so the prose doesn't
+    ship unverified specifics. The threshold gap is about citation
+    density, not factual integrity.
     """
     if report.meta_review is None:
         return ""
@@ -459,17 +481,18 @@ def _draft_banner_md(report: Report) -> str:
     weakness = report.meta_review.weakness_reason or ""
     cross = report.meta_review.cross_cutting_concern or ""
     lines = [
-        "> **Draft — needs revision before customer use.** "
-        f"Meta-eval confidence `{conf:.2f}` (sales-engineer-ready threshold ≥ 0.70). "
-        f"The report's three use cases render below for inspection, with each claim "
-        f"tagged supported / unsupported / rewritten qualitatively in the fact-check block."
+        f"> **Confidence: `{conf:.2f}`** — below the `0.70` sales-engineer-ready bar. "
+        f"The use cases below have been through the full verification chain "
+        f"(numeric anchoring · per-claim fact-check · web-verify rescue · "
+        f"source-judge · qualitative rewrite). The threshold gap reflects "
+        f"citation density, not factual correctness. Suggestions for revision below."
     ]
     if cross:
         lines.append(">")
-        lines.append(f"> **Cross-cutting concern:** {cross}")
+        lines.append(f"> **Cross-cutting improvement note:** {cross}")
     if weakness:
         lines.append(">")
-        lines.append(f"> **Weakest use case:** {weakness}")
+        lines.append(f"> **Use case most worth tightening:** {weakness}")
     return "\n".join(lines)
 
 

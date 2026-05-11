@@ -325,10 +325,24 @@ def _apply_correction_to_prose(
             return field_value.replace(anchor, replacement, 1), True
         return field_value, False
 
-    new_desc, h1 = _patch(target.description)
-    new_why, h2 = _patch(target.why_this_company)
-    new_ttv, h3 = _patch(target.time_to_value.estimate)
-    new_risk, h4 = _patch(target.top_implementation_risk)
+    # After substitution, clean up the duplicated-noun leftover.
+    # Decathlon v9.4 case: original prose "scale across 50+ proprietary brands";
+    # anchor matched only "50"; substitution made it "just under 30
+    # proprietary brands ([source](url))+ proprietary brands". The "+
+    # proprietary brands" tail wasn't consumed because the original
+    # anchor regex doesn't match "+". Strip the trailing duplicated
+    # noun-phrase here so prose reads cleanly.
+    _TAIL_RE = _re.compile(r"(\]\([^)]+\)\))\+\s*\w+(?:\s+\w+){0,3}")
+    def _patch_and_clean(field_value: str) -> tuple[str, bool]:
+        patched, hit = _patch(field_value)
+        if hit:
+            patched = _TAIL_RE.sub(r"\1", patched)
+        return patched, hit
+
+    new_desc, h1 = _patch_and_clean(target.description)
+    new_why, h2 = _patch_and_clean(target.why_this_company)
+    new_ttv, h3 = _patch_and_clean(target.time_to_value.estimate)
+    new_risk, h4 = _patch_and_clean(target.top_implementation_risk)
     if not (h1 or h2 or h3 or h4):
         return False
 

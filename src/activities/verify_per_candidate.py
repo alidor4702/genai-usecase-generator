@@ -87,7 +87,7 @@ async def _deep_read_top(http: httpx.AsyncClient, urls: list[str]) -> list[tuple
             return None
         if html is None:
             return None
-        text = extract_main_text(html, max_chars=6000)
+        text = extract_main_text(html, max_chars=10000)
         return (url, text) if text else None
 
     results = await asyncio.gather(*(_one(u) for u in targets))

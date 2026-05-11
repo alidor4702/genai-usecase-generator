@@ -26,6 +26,25 @@ class FocusArea(StrEnum):
     SUSTAINABILITY = "sustainability"
 
 
+class Action(StrEnum):
+    """What the user wants the workflow to do.
+
+    The default `generate` is the full use-case-generation pipeline. The
+    other actions are lightweight read-only paths the user can pick from
+    the Le Chat entry form so the assistant feels less single-purpose.
+
+    - `generate`     : full pipeline (research → top-3 use cases + report)
+    - `history`      : list the last 10 persisted runs from the runs table
+    - `architecture` : emit a markdown summary of the pipeline architecture
+                       with a link to the standalone web app's /architecture
+                       page for the full interactive version
+    """
+
+    GENERATE = "generate"
+    HISTORY = "history"
+    ARCHITECTURE = "architecture"
+
+
 class ResearchDepth(StrEnum):
     """Scales how many parallel research sub-tasks run.
 
@@ -124,15 +143,31 @@ class WorkflowInput(BaseModel):
     """Top-level input to GenAIUseCaseWorkflow.
 
     Le Chat auto-renders this schema as the workflow's entry form on
-    the assistant. We surface FOUR fields in the form (company, focus
-    area, tier, weights). `research_depth` is a server-side default
+    the assistant. We surface FIVE fields in the form (action, company,
+    focus area, tier, weights). `research_depth` is a server-side default
     held on the model for CLI / web / API but explicitly stripped
     from the JSON schema in `model_json_schema()` below — Le Chat
     users get medium depth (the right default for ~95% of runs);
     power users who want to tune it use the standalone web app or
     the CLI's --depth flag.
+
+    The `action` field branches the workflow: `generate` runs the
+    full pipeline; `history` shows past runs; `architecture` returns
+    the pipeline summary. Adding it inside the same form keeps the
+    surface focused on a single FormInput — Le Chat doesn't have a
+    natural place for slash-commands.
     """
 
+    action: Action = Field(
+        default=Action.GENERATE,
+        title="Action",
+        description=(
+            "What you want me to do. "
+            "Generate use cases — full pipeline for the company below (default). "
+            "Browse past runs — show the last 10 reports (company field optional). "
+            "View architecture — quick pipeline summary + link to the full /architecture page."
+        ),
+    )
     company_name: str = Field(
         min_length=1,
         max_length=200,
@@ -140,7 +175,8 @@ class WorkflowInput(BaseModel):
         description=(
             "The company you want GenAI use cases for. "
             "Examples: Carrefour, Mistral AI, L'Oréal, Veolia, BNP Paribas. "
-            "Any public company by legal or trade name works."
+            "Any public company by legal or trade name works. "
+            "(For Browse past runs / View architecture, type any name — it's ignored.)"
         ),
     )
     focus_area: FocusArea = Field(

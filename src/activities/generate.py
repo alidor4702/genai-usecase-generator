@@ -1,4 +1,5 @@
-"""Generation activity — produce 12 candidate use cases for a target company.
+"""Generation activity — produce N candidate use cases for a target company
+(N=`settings.candidates_to_generate`, default 8 in v9.3+).
 
 Composes the full generation prompt by interpolating:
   - the five criteria (with positive AND negative examples) from `src.criteria`
@@ -11,7 +12,7 @@ After parsing the model's JSON, runs a post-process gauntlet:
   1. Drop any `inspired_by` ID not in the actual retrieved set, log warning
   2. Drop any `grounded_in` field path that doesn't resolve in the company
      context schema, log warning
-  3. Compute pairwise cosine similarity across the 12 candidate descriptions;
+  3. Compute pairwise cosine similarity across the N candidate descriptions;
      if avg > diversity_threshold, run ONE regeneration with the regen-aware
      prompt slot enabled.
   4. Soft warning if novel-direction count < 3.
@@ -264,7 +265,10 @@ def _drop_hallucinated_evidence_ids(
 def _check_novelty_quota(candidates: list[Candidate]) -> int:
     n_novel = sum(1 for c in candidates if c.novelty == Novelty.NOVEL_DIRECTION)
     if n_novel < 3:
-        logger.warning("generate: only %d/12 novel-direction candidates (target ≥3)", n_novel)
+        logger.warning(
+            "generate: only %d/%d novel-direction candidates (target ≥3)",
+            n_novel, len(candidates),
+        )
     return n_novel
 
 
@@ -358,6 +362,9 @@ async def _web_search_tool_handler(
     from tavily import AsyncTavilyClient  # local import — keeps SDK deps lazy
 
     tavily = AsyncTavilyClient(api_key=settings.tavily_api_key)
+    # Tavily caps queries at 400 chars; clamp to 399 to avoid the
+    # "Maximum query length: 400" error class.
+    query = query[:399]
     async with trace_step(
         "generate.web_search",
         "tavily",
@@ -387,7 +394,7 @@ async def _web_search_tool_handler(
             if url:
                 html = await fetch_html(http, url, timeout_s=10.0)
                 if html:
-                    body = extract_main_text(html, max_chars=3000)
+                    body = extract_main_text(html, max_chars=6000)
                     if body:
                         content = body
             if not (url and title and content):
@@ -599,7 +606,8 @@ async def generate_candidates_activity(
     raw_bundle: ResearchBundle | None = None,
     ledger: EvidenceLedger | None = None,
 ) -> tuple[CandidateBatch, EvidenceLedger]:
-    """Generate 12 candidate use cases with post-process gauntlet + one regen.
+    """Generate N candidate use cases (N=`settings.candidates_to_generate`,
+    default 8) with post-process gauntlet + one diversity regen.
 
     Generation has access to the `web_search` tool (Mistral function-calling),
     budget capped at 4 calls per run. Every fetched URL is appended to the

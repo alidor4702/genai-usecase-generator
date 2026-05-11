@@ -271,6 +271,48 @@ def _is_unknown(v: object) -> bool:
     return isinstance(v, str) and v.strip().lower() in _UNKNOWN_TOKENS
 
 
+# ---------------------------------------------------------------------------
+# Entity-identity check (Fix #4 from v9.4 analysis).
+# Guards against research drifting to the wrong entity when the user's input
+# doesn't actually map to a real company. v9.4 batch showed:
+#   - empty input → research found "SoundHound AI" → shipped wrong-company report
+#   - "asdfqwerty" → found an Asdf/Qwerty quantum compiler paper → wrong entity
+#   - "ZYX Corporation" → found Zynex Medical → wrong entity (Zynex ≠ ZYX)
+# Returns 0-100. Below threshold (~70) → caller should refuse.
+# ---------------------------------------------------------------------------
+
+
+def compute_entity_match_score(user_input: str, bundle: ResearchBundle) -> float:
+    """How well does the research-found entity actually match the user's input?
+
+    Compares the user's input (case-insensitive) against:
+      - The verified-companies index match name (if there was a match)
+      - The first sentence of the Wikipedia summary (which typically begins
+        with the entity name, e.g. "Tesla, Inc. is an American multinational
+        ...")
+
+    Returns max(WRatio) across those candidates as a 0-100 score. Returns
+    0.0 if input is empty/too-short or no signal was found — both mean
+    refuse.
+    """
+    from rapidfuzz import fuzz
+    user_input = (user_input or "").strip()
+    if len(user_input) < 2:
+        return 0.0
+    candidates: list[str] = []
+    if bundle.verified_match.matched and bundle.verified_match.name:
+        candidates.append(bundle.verified_match.name)
+    if bundle.wikipedia.found and bundle.wikipedia.summary:
+        first_sentence = bundle.wikipedia.summary.split(".")[0].strip()
+        if first_sentence:
+            candidates.append(first_sentence[:120])
+    if not candidates:
+        return 0.0
+    return max(
+        float(fuzz.WRatio(user_input.lower(), c.lower())) for c in candidates
+    )
+
+
 def _coerce_company_context(
     name: str, bundle: ResearchBundle, data: dict[str, object]
 ) -> CompanyContext:
@@ -474,18 +516,6 @@ async def research_company_activity(
         len(ledger.entries),
     )
     return ctx, ledger, bundle
-
-
-async def gather_bundle_for_company(
-    company_name: str, depth: ResearchDepth = ResearchDepth.MEDIUM
-) -> ResearchBundle:
-    """Public helper so the workflow / CLI can pass the raw bundle to the
-    generation step (which uses it to find specifics the synthesizer may have
-    flattened). Cache hits make this near-free on the second call. Live-
-    verification sources are dropped here — the research activity already
-    seeded the ledger with them."""
-    bundle, _ = await _gather_research_bundle(company_name, depth)
-    return bundle
 
 
 # ---------------------------------------------------------------------------
@@ -717,50 +747,11 @@ async def _run_targeted_search(
 
             html = await fetch_html(http_client, url, timeout_s=10.0)
             if html:
-                body = extract_main_text(html, max_chars=3000)
+                body = extract_main_text(html, max_chars=6000)
                 if body:
                     parts.append(f"  DEEP-READ {url}:\n  {body}")
                     sources.append((url, title, body))
     return "\n".join(parts), sources
-
-
-async def _resynthesize_with_extra_signals(
-    name: str, bundle: ResearchBundle, extra_signal_block: str
-) -> CompanyContext:
-    """Re-run the synthesis call with the extra signal block appended."""
-    if not settings.mistral_api_key:
-        raise RuntimeError("MISTRAL_API_KEY required for re-synthesis")
-    client = mistral_client()
-    user = (
-        _build_synthesis_prompt(name, bundle)
-        + "\n\n## Additional targeted research — TRUSTED SIGNALS (gap-filling pass)\n"
-        "Every bullet below was retrieved live from a credible web source for "
-        "this company. You may quote them VERBATIM — these are TRUSTED. Extract "
-        "specific noun phrases as `stated_priorities`, `likely_data_assets`, "
-        "and `key_products_or_services` items. Copy concrete company facts into "
-        "the relevant structured fields. Empty lists are WRONG if the bullets "
-        "below contain real content.\n\n"
-        + extra_signal_block
-        + "\n\nNow produce the final CompanyContext using ALL signals above, "
-        "INCLUDING the gap-filling block. Lists are mandatory if the gap-fill "
-        "block has any usable content."
-    )
-    r = await client.chat.complete_async(
-        model=settings.mistral_research_model,
-        temperature=0.2,
-        max_tokens=4000,
-        timeout_ms=120_000,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYNTHESIS_SYSTEM},
-            {"role": "user", "content": user},
-        ],
-    )
-    text = r.choices[0].message.content
-    if isinstance(text, list):
-        text = "".join(getattr(b, "text", "") for b in text)
-    data = json.loads(_strip_fence(str(text or "")))
-    return _coerce_company_context(name, bundle, data)
 
 
 @workflows.activity(start_to_close_timeout=timedelta(seconds=180), rate_limit=MISTRAL_API_RATE_LIMIT)

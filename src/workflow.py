@@ -47,12 +47,17 @@ import temporalio.workflow as _temporal_workflow
 # invokes them on the activity executor (outside the sandbox), not when the
 # workflow class is loaded.
 with _temporal_workflow.unsafe.imports_passed_through():
+    from src.activities.alt_actions import (
+        architecture_summary_activity,
+        list_recent_runs_activity,
+    )
     from src.activities.compute_signals import compute_quality_signals_activity
     from src.activities.final_qualify import final_qualitative_replacement_activity
     from src.activities.generate import generate_candidates_activity
     from src.activities.meta_evaluate import meta_evaluate_activity
     from src.activities.render_report import render_report_activity
     from src.activities.research import (
+        compute_entity_match_score,
         enrich_company_context_activity,
         research_company_activity,
     )
@@ -67,7 +72,7 @@ with _temporal_workflow.unsafe.imports_passed_through():
     from src.ui.le_chat_components import build_report_component_tree
 
 # Pure typed-models module — no I/O, safe at definition time
-from src.models import WorkflowInput, WorkflowStatus
+from src.models import Action, WorkflowInput, WorkflowStatus
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +178,33 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
     async def run(self, params: WorkflowInput) -> workflows_mistralai.ChatAssistantWorkflowOutput:
         self.company_name = params.company_name
 
+        # Action branching — the entry form lets the user pick HISTORY or
+        # ARCHITECTURE instead of GENERATE. Both alt actions return a
+        # single markdown chunk and finish; only GENERATE runs the full
+        # pipeline below.
+        if params.action == Action.HISTORY:
+            self.current_step = "history"
+            history_md = await list_recent_runs_activity()
+            return workflows_mistralai.ChatAssistantWorkflowOutput(
+                content=[
+                    workflows_mistralai.TextOutput(
+                        text="Pulling recent runs from the history database."
+                    ),
+                    _md_canvas("Recent runs", history_md),
+                ]
+            )
+        if params.action == Action.ARCHITECTURE:
+            self.current_step = "architecture"
+            arch_md = await architecture_summary_activity()
+            return workflows_mistralai.ChatAssistantWorkflowOutput(
+                content=[
+                    workflows_mistralai.TextOutput(
+                        text="Here's the pipeline architecture summary."
+                    ),
+                    _md_canvas("Pipeline architecture", arch_md),
+                ]
+            )
+
         # Apply the per-run tier override. Activities downstream read
         # `settings.tier` so we mutate the singleton at the start of
         # the run. Concurrent runs with different tiers will race on
@@ -209,6 +241,23 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             ctx, ledger, bundle = await research_company_activity(
                 params.company_name, params.research_depth
             )
+
+            # Entity-identity check (Fix #4) — refuse early when input
+            # doesn't fuzzy-match what research found. Mirrors pipeline.py.
+            entity_match_score = compute_entity_match_score(params.company_name, bundle)
+            logger.info(
+                "workflow: entity_match_score=%.0f (threshold=70)", entity_match_score
+            )
+            if entity_match_score < 70.0:
+                self.current_step = "refused"
+                logger.warning(
+                    "workflow: entity-identity refusal — input=%r score=%.0f",
+                    params.company_name, entity_match_score,
+                )
+                return _build_refusal_output(
+                    params.company_name, ctx.meta.research_sources
+                )
+
             ctx, ledger = await enrich_company_context_activity(ctx, ledger, bundle)
             logger.info(
                 "workflow: evidence ledger seeded with %d entries", len(ledger.entries)
@@ -221,11 +270,18 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
                 ),
             })
 
-        # Confidence gate after the context-completion pass.
+        # Confidence gate — hardened to 2-of-3 (Fix #3 from v9.4 analysis).
+        # Was an OR of three signals which was too permissive — edge-case
+        # inputs slipped through whenever research happened to populate
+        # `existing_ai_initiatives` for an unrelated entity.
+        confidence_signals = [
+            ctx.meta.research_confidence >= settings.research_confidence_threshold,
+            ctx.meta.is_verified,
+            len(ctx.existing_ai_initiatives) > 0,
+        ]
         confidence_ok = (
-            ctx.meta.research_confidence >= settings.research_confidence_threshold
-            or ctx.meta.is_verified
-            or len(ctx.existing_ai_initiatives) > 0
+            sum(confidence_signals) >= 2
+            or ctx.meta.research_confidence >= 0.80
         )
         if not confidence_ok:
             self.current_step = "refused"

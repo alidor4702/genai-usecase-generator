@@ -58,7 +58,7 @@ async def _deep_read_body(http: httpx.AsyncClient, url: str) -> str:
     if html is None:
         return ""
     try:
-        return extract_main_text(html, max_chars=8000) or ""
+        return extract_main_text(html, max_chars=12000) or ""
     except Exception as e:
         logger.warning("web_verify._deep_read_body: extract failed (%s) — %s", url, type(e).__name__)
         return ""

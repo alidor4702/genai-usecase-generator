@@ -1,8 +1,10 @@
 "use client";
+import { useState } from "react";
 import AnimatedBackground from "../components/AnimatedBackground";
 import MermaidDiagram from "../components/MermaidDiagram";
-import PipelineDiagram from "../components/PipelineDiagram";
+import PipelineDiagram, { STEP_DETAILS } from "../components/PipelineDiagram";
 import SiteNav from "../components/SiteNav";
+import StepDetailPanel from "../components/StepDetailPanel";
 
 /**
  * /architecture — technical visual explainer.
@@ -107,6 +109,9 @@ const DATA_SOURCES: DataRow[] = [
 ];
 
 export default function Architecture() {
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const selectedDetail = selectedStepId ? STEP_DETAILS[selectedStepId] : null;
+
   return (
     <>
       <AnimatedBackground />
@@ -126,15 +131,18 @@ export default function Architecture() {
           </p>
         </header>
 
-        {/* Pipeline diagram + determinism rules — side-by-side on wide
-            screens so the right column isn't empty next to the LR mermaid.
-            On narrow screens this stacks. */}
+        {/* Pipeline diagram + interactive step detail (or determinism rules
+            when nothing is selected) — side-by-side on wide screens, stacked
+            on narrow. */}
         <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6 mb-8">
           <Section
             title="Full pipeline"
-            subtitle="14 steps · activities decorated with Mistral Workflows determinism rules"
+            subtitle="15 clickable steps · activities decorated with Mistral Workflows determinism rules"
           >
-            <PipelineDiagram />
+            <PipelineDiagram
+              selectedId={selectedStepId}
+              onSelect={setSelectedStepId}
+            />
             <Legend
               items={[
                 { color: "bg-mistral-orange", label: "LLM activity" },
@@ -144,35 +152,50 @@ export default function Architecture() {
               ]}
             />
           </Section>
-          <Section
-            title="Determinism contract"
-            subtitle="Why the workflow class is pure orchestration"
-          >
-            <ul className="text-sm text-slate-300 space-y-2.5 leading-relaxed">
-              <li>
-                <code className="text-mistral-orangeBright text-xs">src/workflow.py</code>
-                {" "}has no <code className="text-xs">datetime.now()</code>, no
-                {" "}<code className="text-xs">random()</code>, no I/O. The
-                runtime replays workflow code from history; non-determinism
-                breaks replay.
-              </li>
-              <li>
-                Every side-effect — every LLM call, web fetch, DB read,
-                embedding — lives in an activity with an explicit
-                {" "}<code className="text-xs">start_to_close_timeout</code>.
-              </li>
-              <li>
-                Every activity uses typed Pydantic I/O. Every LLM call uses
-                {" "}<code className="text-xs">response_format</code> with
-                a JSON schema. No prose-parsing downstream.
-              </li>
-              <li>
-                Output type is{" "}
-                <code className="text-mistral-orangeBright text-xs">ChatAssistantWorkflowOutput</code>
-                {" "}so the workflow publishes as a Le Chat assistant.
-              </li>
-            </ul>
-          </Section>
+          {selectedDetail ? (
+            <Section
+              title="Step detail"
+              subtitle="Click another step in the diagram to switch, or close to see the determinism contract"
+            >
+              <StepDetailPanel
+                detail={selectedDetail}
+                onClose={() => setSelectedStepId(null)}
+              />
+            </Section>
+          ) : (
+            <Section
+              title="Determinism contract"
+              subtitle="Why the workflow class is pure orchestration"
+            >
+              <ul className="text-sm text-slate-300 space-y-2.5 leading-relaxed">
+                <li>
+                  <code className="text-mistral-orangeBright text-xs">src/workflow.py</code>
+                  {" "}has no <code className="text-xs">datetime.now()</code>, no
+                  {" "}<code className="text-xs">random()</code>, no I/O. The
+                  runtime replays workflow code from history; non-determinism
+                  breaks replay.
+                </li>
+                <li>
+                  Every side-effect — every LLM call, web fetch, DB read,
+                  embedding — lives in an activity with an explicit
+                  {" "}<code className="text-xs">start_to_close_timeout</code>.
+                </li>
+                <li>
+                  Every activity uses typed Pydantic I/O. Every LLM call uses
+                  {" "}<code className="text-xs">response_format</code> with
+                  a JSON schema. No prose-parsing downstream.
+                </li>
+                <li>
+                  Output type is{" "}
+                  <code className="text-mistral-orangeBright text-xs">ChatAssistantWorkflowOutput</code>
+                  {" "}so the workflow publishes as a Le Chat assistant.
+                </li>
+                <li className="text-xs text-ink-secondary pt-2 border-t border-mistral-border/40">
+                  Want stage-specific details? <span className="text-mistral-orangeBright">Click any step</span> in the pipeline on the left.
+                </li>
+              </ul>
+            </Section>
+          )}
         </div>
 
         {/* Model + temperature table */}
@@ -263,9 +286,32 @@ export default function Architecture() {
 
         {/* v7 verification chain */}
         <Section
-          title="Verification chain (v7)"
+          title="Verification chain"
           subtitle="Every substantive claim runs the same gauntlet — pool → web-verify → judge → render"
         >
+          <div className="mb-5 rounded-lg border border-mistral-orange/30 bg-mistral-orange/5 p-4 text-sm text-slate-200 leading-relaxed">
+            <p className="font-semibold text-white mb-2">
+              What this chain actually does, in one paragraph:
+            </p>
+            <p>
+              Three sequential safety nets sit between &quot;the LLM drafted prose&quot;
+              and &quot;the report ships&quot;. <span className="font-semibold text-white">Web-verify</span>{" "}
+              rescues real-but-uncited claims via fresh Tavily searches with a
+              two-tier credibility gate (allowlisted domains auto-promote;
+              non-allowlist domains need an entity-or-number anchor).{" "}
+              <span className="font-semibold text-white">Source-judge</span> then
+              reads each cited source against its claim and rejects citations
+              where the source doesn&apos;t actually support the claim — catches the
+              YouTube-title-only-mentions-LVMH kind of false positive.{" "}
+              <span className="font-semibold text-white">Final-qualify</span>{" "}
+              takes any number or named entity the whole chain couldn&apos;t anchor
+              and rewrites it qualitatively in the prose, so the report doesn&apos;t
+              ship asserting unverified specifics. The fact-check pass rate at
+              the bottom of every report measures how many substantive claims
+              cleared this chain with an explicit anchored source — it is{" "}
+              <em>not</em> a measure of what fraction of the report is true.
+            </p>
+          </div>
           <MermaidDiagram source={VERIFICATION_CHAIN_MERMAID} id="arch-verify" />
           <ul className="text-sm text-slate-300 mt-3 space-y-1.5 leading-relaxed">
             <li>
@@ -274,23 +320,149 @@ export default function Architecture() {
             </li>
             <li>
               <span className="font-semibold text-white">Web-verify rescue</span> —
-              if the pool can't, one targeted Tavily search runs with a deterministic
+              if the pool can&apos;t, one targeted Tavily search runs with a deterministic
               two-tier credibility gate.
             </li>
             <li>
               <span className="font-semibold text-white">Source judge</span> — a
               Mistral Small reads the (claim, snippet) pair and decides whether the
               source actually supports the claim, vs. just contains related entities.
-              Catches the L'Oréal aiautomationglobal.com / BNP intuitionlabs.ai
+              Catches the L&apos;Oréal aiautomationglobal.com / BNP intuitionlabs.ai
               failure class from v6.
             </li>
             <li>
               <span className="font-semibold text-white">Final qualify</span> —
               anything still unsupported gets surgically rewritten into qualitative
-              phrasing so the report doesn't ship fabricated facts. Replaces v6's
+              phrasing so the report doesn&apos;t ship fabricated facts. Replaces v6&apos;s
               pre-strip-at-polish behavior, which was over-stripping real claims.
             </li>
           </ul>
+        </Section>
+
+        {/* Cost breakdown — per-run cost today + scalability projection */}
+        <Section
+          title="Cost & scalability"
+          subtitle="Per-run cost today, and what changes if this runs at production volume"
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="rounded-lg border border-mistral-border p-4 bg-mistral-surface/40">
+              <h3 className="text-lg font-bold text-white mb-3">
+                Per-run cost today
+              </h3>
+              <p className="text-xs text-ink-secondary mb-3 leading-relaxed">
+                Median standard-tier run, ~125 LLM calls + 8-12 Tavily searches.
+                Rough $/run at current Mistral + Tavily pricing.
+              </p>
+              <ul className="text-sm text-slate-300 space-y-1.5">
+                <li className="flex justify-between">
+                  <span>Research + gap-fill (Medium + Small)</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.010</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>Generate (Medium + 2 web_search)</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.025</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>Score (Small × 2 parallel)</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.005</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>Verify (3 Tavily + 3 Small)</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.015</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>Enrich (Large 3, drafts top-3)</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.045</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>Polish + attribution (3 × Small each)</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.010</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>Meta-eval (Medium, atomic claim splitting)</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.012</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>Web-verify rescue (3-5 Tavily)</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.008</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>Source-judge (~30-50 Small calls)</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.012</span>
+                </li>
+                <li className="flex justify-between">
+                  <span>Final-qualify + quality signals</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.005</span>
+                </li>
+                <li className="flex justify-between pt-2 mt-1 border-t border-mistral-border font-semibold text-white">
+                  <span>Standard tier — total</span>
+                  <span className="font-mono text-mistral-orange">~$0.15</span>
+                </li>
+                <li className="flex justify-between text-xs text-ink-secondary pt-1">
+                  <span>Fast tier (Medium enrich, no polish/attribution)</span>
+                  <span className="font-mono">~$0.06</span>
+                </li>
+                <li className="flex justify-between text-xs text-ink-secondary">
+                  <span>Max tier (deeper Tavily, larger budgets)</span>
+                  <span className="font-mono">~$0.22</span>
+                </li>
+              </ul>
+            </div>
+            <div className="rounded-lg border border-mistral-border p-4 bg-mistral-surface/40">
+              <h3 className="text-lg font-bold text-white mb-3">
+                At scale — 10,000 runs/day
+              </h3>
+              <p className="text-xs text-ink-secondary mb-3 leading-relaxed">
+                What changes when this runs at production volume. The per-run
+                cost is roughly flat; the infrastructure has to keep up.
+              </p>
+              <ul className="text-sm text-slate-300 space-y-2.5">
+                <li>
+                  <span className="font-semibold text-white">LLM spend</span>
+                  {" "}— $1.5K/day on standard tier
+                  ({" "}<span className="font-mono text-mistral-orangeBright">10K × $0.15</span>{" "}).
+                  Sub-linear in practice because the cache layer (Wikipedia 30d
+                  TTL, news 24h, jobs 48h, existing initiatives 7d) hits ~40% on
+                  repeat companies.
+                </li>
+                <li>
+                  <span className="font-semibold text-white">Tavily searches</span>
+                  {" "}— 80–120K calls/day. Tavily Enterprise tier required.
+                </li>
+                <li>
+                  <span className="font-semibold text-white">SQLite → Postgres + pgvector</span>
+                  {" "}— at this volume the precedent corpus + cache + runs
+                  table need a real DB. ~$80/mo managed Postgres for the
+                  pattern of writes.
+                </li>
+                <li>
+                  <span className="font-semibold text-white">Redis cache layer</span>
+                  {" "}— in front of Postgres for the Tavily + Wikipedia
+                  responses. ~$40/mo at this volume.
+                </li>
+                <li>
+                  <span className="font-semibold text-white">Mistral Compute (on-prem)</span>
+                  {" "}— at higher tiers, customers want EU-sovereign deployment.
+                  Self-hosted Mistral Compute cluster replaces the API spend.
+                </li>
+                <li>
+                  <span className="font-semibold text-white">Mistral Workflows worker pool</span>
+                  {" "}— ~8-12 workers handle 10K runs/day at a 12-min p95 wall
+                  time. The Workflows runtime auto-scales the activity pool.
+                </li>
+                <li className="pt-2 mt-1 border-t border-mistral-border font-semibold text-white flex justify-between">
+                  <span>Infra spend / day (excl. LLM)</span>
+                  <span className="font-mono text-mistral-orange">~$15-30</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <p className="text-xs text-ink-secondary mt-4 leading-relaxed">
+            Numbers are estimates from observed v9.4 batch traces — see{" "}
+            <code className="text-mistral-orangeBright">docs/benchmarks/v9_4/findings.md</code>{" "}
+            for per-step timing data. Token budgets are upper bounds; most runs
+            land 30-40% below.
+          </p>
         </Section>
 
         {/* Determinism & workflow rules */}

@@ -523,78 +523,87 @@ def _coerce_enriched(
 _POLISH_SYSTEM = """\
 You are polishing customer-facing AI use case prose for delivery to a Mistral
 sales engineer. The text has been through automated checks and contains
-intermediate markers and opaque IDs that you need to clean up.
+intermediate markers and opaque IDs that you need to clean up. You also have
+an opportunity to attach NEW citations from the evidence pool, but only under
+strict rules — see Step 5.
 
 Transformations to apply, IN ORDER:
 
-1. UNANCHORED NUMBER MARKERS + ANY OTHER QUANTITATIVE COMPANY CLAIM —
-   the regex-based numeric scrubber wraps obvious patterns ($, %, M/B,
-   weeks, x-multipliers) as `[unanchored: X]`, but it doesn't catch
-   every unit (PB, TB, store counts, customer counts, country counts,
-   employee counts, dataset sizes in any unit). For ANY specific
-   quantitative claim about THIS company's internals (regardless of
-   whether the regex marked it), do this:
-
-   STEP 1 — CHECK THE FULL SOURCE POOL.
-   The user message includes a "## Full evidence pool" block listing every
-   ledger entry the pipeline retrieved (Wikipedia, news, gap-fill,
-   per-candidate verification, web_search). For each specific number in
-   the prose, scan the pool excerpts for that figure attached to the same
-   entity (or near-equivalent: "14,000 stores" matches "14000 stores",
-   "operates in 40 countries" matches "present in 40 countries", "10 PB"
-   matches "10-petabyte", etc.).
-
-   STEP 2 — IF FOUND in the pool, KEEP the number AND attach a citation.
-   Replace `[unanchored: X]` (if present) with `X [short anchor](url)`
-   pulled from the pool entry where you found support. If the number is
-   NOT inside an unanchored marker but you confirmed it from the pool,
-   leave the number as-is and append a citation in the same sentence.
-   ALSO add the ledger entry's `evidence_id` to the `cited_evidence_ids`
-   field in your output (a flat list of ev-IDs you newly cited).
-
-   STEP 3 — IF NOT FOUND in the pool, KEEP THE NUMBER AS-IS (drop the
-   `[unanchored:]` wrapper but DO NOT replace with qualitative language).
-   The number flows through to the downstream verification chain:
-   meta-eval extracts it as a substantive claim, web-verify runs a Tavily
-   search if the pool didn't anchor it, and a source-judge decides
-   whether any retrieved source actually supports it. ONLY if that whole
-   chain still finds no support will a separate final-render step rewrite
-   the prose qualitatively.
-     - "reduces audit time by [unanchored: 30%]" → "reduces audit time by
-       30%" (keep the number, drop the bracket — verification chain decides)
+1. UNANCHORED NUMBER MARKERS — the regex-based numeric scrubber wraps
+   obvious patterns ($, %, M/B, weeks, x-multipliers) as `[unanchored: X]`.
+   STRIP THE BRACKETS but KEEP THE NUMBER. The downstream verification
+   chain decides whether the number gets retained or qualified out.
+     - "reduces audit time by [unanchored: 30%]" → "reduces audit time by 30%"
      - "$[unanchored: 4M] in fines" → "$4M in fines"
-     - "1.5B+ active devices" (already plain, no bracket) → leave as-is
-   Polish's job is to render clean prose, NOT to pre-strip unverified
-   numbers. v6 over-stripped real numbers (e.g. Carrefour's 14k stores,
-   L'Oréal's 10 PB) because polish ran before the verification chain had
-   a chance. v7 lets every number reach the verifier first.
-
-   When a specific number IS already anchored in-sentence (precedent
-   reference, markdown link to a ledger URL), KEEP IT and don't touch it.
    NEVER leave any `[unanchored: ...]` marker in the final output.
 
-2. OPAQUE LEDGER IDS — every `(ev-XXXXXXXXXX)` reference is an internal ID
-   that must become a markdown link. The mapping {evidence_id → {title, url}}
-   is provided. REPLACE each `(ev-XXX)` with a markdown link of form
+2. OPAQUE LEDGER IDS — every `(ev-XXXXXXXXXX)` reference is an internal ID.
+   The source map provided in the user message maps each ev-ID to a
+   (title, url) pair. REPLACE each `(ev-XXX)` with a markdown link of form
    `[short descriptive anchor](url)`. Use 2-6 words for anchor text that
    describes WHAT the source is. Examples:
      "supplier emissions platform (ev-62dd0bb89b)" →
-       "supplier emissions platform ([Carrefour 2024 climate plan](https://...))"
-     "(ev-7f9843cb4e)" →
-       "([Concordis buying alliance announcement](https://...))"
-   If the ev-ID has no provided mapping, drop it (just remove the
-   parenthetical).
+       "supplier emissions platform ([Carrefour climate plan](https://...))"
+   If the ev-ID has NO mapping in the source map, REMOVE the parenthetical
+   entirely (the ID is invalid — model-invented).
 
-3. URLS — keep only URLs that match an entry in the provided source map.
-   If you encounter any URL not in that map, strip it (rewrite the sentence
-   to remove the link).
+3. URLS — keep only URLs that match an entry in the provided source map. If
+   you encounter any URL not in that map, strip it (rewrite the sentence to
+   remove the link).
 
-4. PRECEDENT IDS — any `google_cloud_*-...` or `evidently-...` corpus ID
-   in prose should be removed (replaced with the named company if available).
+4. PRECEDENT IDS — any `google_cloud_*-...` or `evidently-...` corpus ID in
+   prose should be removed (replaced with the named company if available).
+
+5. NEW CITATIONS FROM THE EVIDENCE POOL — OPTIONAL and STRICT.
+
+   The user message includes a "## Full evidence pool" block listing ledger
+   entries beyond the candidate's own evidence_ids. You MAY attach a NEW
+   citation to a specific claim IF AND ONLY IF you can find a pool entry
+   whose excerpt contains BOTH:
+     (a) THE SPECIFIC ENTITY named in the claim (the actual company,
+         product, person, or named thing — NOT a generic adjacent reference),
+         AND
+     (b) THE SPECIFIC FIGURE, FACT, OR CLAIM asserted (the actual number,
+         date, named action — NOT a vague topical mention or industry
+         context).
+
+   When you find a match satisfying BOTH (a) AND (b):
+     - Attach the citation inline as `[short anchor](url)`
+     - Add the ev-ID to `cited_evidence_ids` in your output
+
+   IF YOU CANNOT FIND A POOL ENTRY THAT SATISFIES BOTH (a) AND (b), LEAVE
+   THE CLAIM UNCITED. Do not invent citations. Do not attach
+   loosely-related sources. The downstream judge will reject weak citations
+   anyway — saving you from creating them avoids cluttering the final
+   report with `[judge: rejected]` flags.
+
+   Examples of VALID new citations:
+     ✓ Claim: "Spotify is available in 184 markets"
+       Pool excerpt: "Spotify is available in 184 markets" → CITE
+       (entity AND figure both present in source)
+     ✓ Claim: "SAP acquired Prior Labs for €1B+"
+       Pool excerpt: "SAP and Prior Labs entered agreement; deal exceeded €1B"
+       → CITE (entity AND figure both present)
+
+   Examples of CITATIONS TO REJECT (DO NOT add):
+     ✗ Claim: "LVMH reported 25% reduction in counterfeit listings"
+       Pool excerpt: YouTube video titled "Tech 2 Blockchain LVMH" with
+         no body content → REJECT (entity in title but no figure or claim)
+     ✗ Claim: "Kering achieved sourcing efficiency gains"
+       Pool excerpt: "French groups Hermès, LVMH and Kering..." without
+         efficiency context → REJECT (entity present, claim absent)
+     ✗ Claim: "Chanel deployed knowledge bases for training"
+       Pool excerpt: "luxury manufacturers are exploring AI for training" →
+       REJECT (no entity match — generic industry text)
+     ✗ Claim: "Peer luxury brands have reported material reductions"
+       Pool excerpt: any source not citing a specific peer or figure →
+       REJECT (claim is too generic to anchor)
+
+   When in doubt, LEAVE UNCITED. A clean uncited claim is better than a
+   cluttered citation the judge will reject.
 
 PRESERVE:
-- All numbers that are NOT inside [unanchored: X] markers — those have been
-  verified.
+- All numbers (they've been verified or will be verified downstream).
 - The structure of the prose (paragraphs, section flow).
 - All factual claims and named entities.
 - All existing markdown links that point at URLs in the source map.
@@ -605,7 +614,7 @@ Output STRICT JSON with the polished fields:
   "why_this_company": "...",
   "time_to_value": "...",
   "top_implementation_risk": "...",
-  "cited_evidence_ids": ["ev-...", ...]   // pool entries you newly cited
+  "cited_evidence_ids": ["ev-...", ...]   // pool entries you newly cited (Step 5)
 }
 """
 
@@ -732,6 +741,65 @@ _URL_RE = re.compile(r"https?://[^\s\)\]]+")
 _EMPTY_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(\s*\)")
 
 
+# ---------------------------------------------------------------------------
+# Prose-artifact cleanup (Fix A + #1 + #2 from v9.4 analysis).
+# Three patterns covered:
+#   1. `(ev-XXXXX)` IDs not in the ledger — model-invented fake IDs that
+#      polish was supposed to strip but didn't (Hermès v9.4 leaked literal
+#      `(ev-7a1b2c3d4e)` into the rendered prose).
+#   2. Bare `[X]` brackets used like inline citations but not actual markdown
+#      links — looks broken to a reader (Fix A original case).
+#   3. Trailing noun-phrase leftovers from `[corrected →]` substitutions,
+#      e.g. "30 proprietary brands ([source](url))+ proprietary brands"
+#      where the source-judge's correction inserted a link but didn't
+#      consume the duplicated noun (Decathlon v9.4 case).
+# Runs at the end of the enrich activity over all use cases — covers fast
+# (which skips polish) as well as standard/max (which run polish first).
+# ---------------------------------------------------------------------------
+_FAKE_EV_RE = re.compile(r"\s*\(ev-[0-9a-f]{6,12}\)")
+_BARE_BRACKET_RE = re.compile(r"\[([^\]\n]+)\](?!\()")
+_CORRECTION_TAIL_RE = re.compile(r"(\]\([^)]+\)\))\+\s*\w+(?:\s+\w+){0,3}")
+
+
+def _strip_invalid_brackets(text: str, valid_ev_ids: set[str]) -> str:
+    """Clean prose artifacts. Idempotent — regex no-ops on clean prose."""
+    if not text:
+        return text
+    # 1. Drop (ev-XXX) IDs not in the ledger
+    def _drop_unmapped(m: re.Match[str]) -> str:
+        ev_id = m.group(0).strip().strip("()").strip()
+        return "" if ev_id not in valid_ev_ids else m.group(0)
+    text = _FAKE_EV_RE.sub(_drop_unmapped, text)
+    # 2. Strip bare [X] brackets that aren't markdown links (no following `(`)
+    text = _BARE_BRACKET_RE.sub(r"\1", text)
+    # 3. Collapse "([source](url))+ noun noun" → "([source](url))"
+    text = _CORRECTION_TAIL_RE.sub(r"\1", text)
+    return text
+
+
+def _clean_use_case_prose(use_case: EnrichedUseCase, valid_ev_ids: set[str]) -> bool:
+    """Apply _strip_invalid_brackets to every prose field. Returns True if
+    any field was modified."""
+    modified = False
+    new_desc = _strip_invalid_brackets(use_case.description, valid_ev_ids)
+    if new_desc != use_case.description:
+        use_case.description = new_desc
+        modified = True
+    new_why = _strip_invalid_brackets(use_case.why_this_company, valid_ev_ids)
+    if new_why != use_case.why_this_company:
+        use_case.why_this_company = new_why
+        modified = True
+    new_risk = _strip_invalid_brackets(use_case.top_implementation_risk, valid_ev_ids)
+    if new_risk != use_case.top_implementation_risk:
+        use_case.top_implementation_risk = new_risk
+        modified = True
+    new_ttv = _strip_invalid_brackets(use_case.time_to_value.estimate, valid_ev_ids)
+    if new_ttv != use_case.time_to_value.estimate:
+        use_case.time_to_value.estimate = new_ttv
+        modified = True
+    return modified
+
+
 def _strip_fabricated_urls(text: str, valid_urls: set[str]) -> tuple[str, list[str]]:
     """Remove any URL not in `valid_urls` (from the ledger), then collapse any
     empty-link markdown `[text]()` to just `text`. Returns
@@ -827,6 +895,14 @@ async def _polish_use_case(
         '"cited_evidence_ids": ["ev-...", ...]}'
     )
     try:
+        # Polish runs on Mistral Small with the strict _POLISH_SYSTEM prompt.
+        # v9.5 tried Medium for nuance, but it cost +30-60s wall time on
+        # standard runs and demoted SAP from SE-ready while the pass rate
+        # stayed identical (the extra prose density just produced more
+        # judge-extractable claims for the same supported/total ratio).
+        # v9.6 reverts to Small but keeps the strict prompt — the prompt
+        # rule itself ("only cite if exact entity AND figure match") is
+        # what drives quality, the model size matters less.
         async with trace_step(
             "polish",
             settings.mistral_scoring_model,
@@ -1133,6 +1209,21 @@ async def select_and_enrich_activity(
         )
         total_attribution_fixes = sum(attribution_results)
 
+    # Prose-artifact cleanup — runs on EVERY tier (including fast which skips
+    # polish). Strips fake (ev-XXX) IDs the model invented, bare `[X]`
+    # brackets that look like links but aren't, and trailing noun-phrase
+    # leftovers from source-judge corrections. See _strip_invalid_brackets
+    # above for full pattern list.
+    valid_ev_ids = {item.id for item in ledger.entries}
+    cleaned_count = sum(
+        1 for uc in enriched if _clean_use_case_prose(uc, valid_ev_ids)
+    )
+    if cleaned_count:
+        logger.info(
+            "select_enrich: cleaned prose artifacts on %d/%d use cases",
+            cleaned_count, len(enriched),
+        )
+
     raw_rej = data.get("rejected_appendix") or []
     rejected: list[RejectedCandidate] = []
     # Build a set of title-like tokens for the enriched top-3 so we can
@@ -1192,4 +1283,25 @@ async def select_and_enrich_activity(
         total_polished,
         total_attribution_fixes,
     )
+
+    # Defensive assert — Tesla v9.4 ran into a cryptic Pydantic ValidationError
+    # at Report() construction because this activity returned fewer than 3
+    # use cases. Surface the failure HERE with context (final + raw_uses
+    # counts) so future occurrences are diagnosable instead of a mystery
+    # one level downstream. Padding logic above should make this unreachable
+    # on a healthy run; if it fires, something deeper is broken.
+    final_count = len(enriched)
+    if final_count != 3:
+        raw_uses_count = len(raw_uses) if isinstance(raw_uses, list) else -1
+        logger.error(
+            "select_enrich: produced %d use cases instead of 3 "
+            "(final=%d, raw_uses=%d, scored=%d)",
+            final_count, len(final), raw_uses_count, len(scored.scored),
+        )
+        raise RuntimeError(
+            f"select_and_enrich_activity produced {final_count} use cases "
+            f"(expected 3); final={len(final)}, raw_uses={raw_uses_count}, "
+            f"scored={len(scored.scored)}"
+        )
+
     return enriched[:3], rejected
