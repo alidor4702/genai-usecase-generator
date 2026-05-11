@@ -6,10 +6,14 @@ import type { TraceEvent } from "../lib/api";
  * Compact stats row that updates as the run progresses:
  *
  *   - elapsed wall time (live ticker)
- *   - count of trace events recorded
  *   - count of LLM calls made
  *   - count of web searches
- *   - count of fact-check claims (only after meta-eval runs)
+ *   - source-anchored claim ratio (only after meta-eval runs)
+ *   - meta-eval confidence (only after meta-eval runs)
+ *
+ * v9.8: dropped raw "Events" count (low signal — same as agent activity
+ * length below). Renamed "Fact-check" → "Anchored" to match the new
+ * vocabulary across the rest of the surface.
  */
 export default function LiveStats({
   events,
@@ -37,23 +41,22 @@ export default function LiveStats({
   const webSearches = events.filter((e) => e.actor === "tavily" || e.step === "generate.web_search").length;
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
       <Stat label="Elapsed" value={elapsedStr} accent />
-      <Stat label="Events" value={String(events.length)} />
       <Stat label="LLM calls" value={String(llmCalls)} />
       <Stat label="Web searches" value={String(webSearches)} />
       {done && factCheckPass !== null && (
         <Stat
-          label="Fact-check"
+          label="Anchored"
           value={`${Math.round(factCheckPass * 100)}%`}
-          tone={factCheckPass >= 0.7 ? "ok" : factCheckPass >= 0.5 ? "warn" : "bad"}
+          tone={factCheckPass >= 0.8 ? "ok" : factCheckPass >= 0.6 ? "warn" : "bad"}
         />
       )}
       {done && metaConfidence !== null && (
         <Stat
           label="Meta-eval"
           value={metaConfidence.toFixed(2)}
-          tone={metaConfidence >= 0.7 ? "ok" : metaConfidence >= 0.55 ? "warn" : "bad"}
+          tone={metaConfidence >= 0.8 ? "ok" : metaConfidence >= 0.6 ? "warn" : "bad"}
         />
       )}
     </div>

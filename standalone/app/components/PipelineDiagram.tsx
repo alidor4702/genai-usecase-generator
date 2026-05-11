@@ -47,9 +47,10 @@ type Phase = { title: string; steps: Step[] };
 
 const PHASES: Phase[] = [
   {
-    title: "Phase 1 · Research & retrieve",
+    title: "Phase 1 · Resolve & research",
     steps: [
       { id: "input", label: "Company + knobs", role: "io" },
+      { id: "resolve_entity", label: "0. Resolve entity", sub: "Mistral Small", role: "llm" },
       { id: "research", label: "1. Research", sub: "Mistral Medium 3.5", role: "llm" },
       { id: "gap_fill", label: "1b. Gap-fill", sub: "Tavily", role: "live" },
       { id: "retrieve", label: "2. Retrieve", sub: "cosine top-k", role: "preset" },
@@ -98,6 +99,24 @@ export const STEP_DETAILS: Record<string, StepDetail> = {
     notes: [
       "research_depth is server-side default (medium); Le Chat form hides it.",
       "Tier override mutates settings.tier at the start of each run.",
+    ],
+  },
+  resolve_entity: {
+    fullName: "Step 0 — Resolve entity (upfront canonicalisation)",
+    model: "mistral-small-2603",
+    temperature: "0.1",
+    timeout: "30s",
+    reads: ["The user's raw company-name input"],
+    writes: [
+      "Canonical company name (e.g. 'Apple' → 'Apple Inc.', 'Hermes' → 'Hermès International S.A.')",
+      "Refusal verdict for gibberish / empty / unidentifiable inputs",
+    ],
+    whyActivity:
+      "One Mistral Small call. Replaces v9.5's rapidfuzz-WRatio heuristic which was substring-biased (matched 'Apple' to 'Applegate'). The LLM has world knowledge of real companies and can disambiguate short names cleanly.",
+    notes: [
+      "Refuses in ~2s when input doesn't map to an identifiable company — saves the ~100s of pipeline work the wrong-entity case used to burn.",
+      "When confidence is medium/low, still proceeds with the canonical name — the downstream confidence gate catches genuine drift.",
+      "Cost: ~$0.001 per call. Cheap insurance against entity drift.",
     ],
   },
   research: {

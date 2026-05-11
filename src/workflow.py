@@ -47,10 +47,6 @@ import temporalio.workflow as _temporal_workflow
 # invokes them on the activity executor (outside the sandbox), not when the
 # workflow class is loaded.
 with _temporal_workflow.unsafe.imports_passed_through():
-    from src.activities.alt_actions import (
-        architecture_summary_activity,
-        list_recent_runs_activity,
-    )
     from src.activities.compute_signals import compute_quality_signals_activity
     from src.activities.entity_resolution import resolve_company_entity_activity
     from src.activities.final_qualify import final_qualitative_replacement_activity
@@ -72,7 +68,7 @@ with _temporal_workflow.unsafe.imports_passed_through():
     from src.ui.le_chat_components import build_report_component_tree
 
 # Pure typed-models module — no I/O, safe at definition time
-from src.models import Action, WorkflowInput, WorkflowStatus
+from src.models import WorkflowInput, WorkflowStatus
 
 logger = logging.getLogger(__name__)
 
@@ -178,55 +174,12 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
     async def run(self, params: WorkflowInput) -> workflows_mistralai.ChatAssistantWorkflowOutput:
         self.company_name = params.company_name
 
-        # Natural-language command detection — user can type "history",
-        # "show me history", "architecture", etc. into the company field
-        # and the workflow auto-routes to the corresponding action,
-        # without needing to pick from the dropdown. This makes Le Chat
-        # feel conversational instead of form-driven.
-        company_lower = (params.company_name or "").strip().lower()
-        _HISTORY_TRIGGERS = {
-            "history", "show history", "show me history", "show me the history",
-            "past runs", "list runs", "browse runs", "browse past runs",
-            "show past runs", "recent runs",
-        }
-        _ARCH_TRIGGERS = {
-            "architecture", "arch", "show architecture", "view architecture",
-            "show me architecture", "show me the architecture",
-            "how it works", "pipeline", "show pipeline",
-        }
-        if company_lower in _HISTORY_TRIGGERS:
-            logger.info("workflow: detected history command in company field")
-            params = params.model_copy(update={"action": Action.HISTORY})
-        elif company_lower in _ARCH_TRIGGERS:
-            logger.info("workflow: detected architecture command in company field")
-            params = params.model_copy(update={"action": Action.ARCHITECTURE})
-
-        # Action branching — the entry form lets the user pick HISTORY or
-        # ARCHITECTURE instead of GENERATE. Both alt actions return a
-        # single markdown chunk and finish; only GENERATE runs the full
-        # pipeline below.
-        if params.action == Action.HISTORY:
-            self.current_step = "history"
-            history_md = await list_recent_runs_activity()
-            return workflows_mistralai.ChatAssistantWorkflowOutput(
-                content=[
-                    workflows_mistralai.TextOutput(
-                        text="Pulling recent runs from the history database."
-                    ),
-                    _md_canvas("Recent runs", history_md),
-                ]
-            )
-        if params.action == Action.ARCHITECTURE:
-            self.current_step = "architecture"
-            arch_md = await architecture_summary_activity()
-            return workflows_mistralai.ChatAssistantWorkflowOutput(
-                content=[
-                    workflows_mistralai.TextOutput(
-                        text="Here's the pipeline architecture summary."
-                    ),
-                    _md_canvas("Pipeline architecture", arch_md),
-                ]
-            )
+        # v9.8: the Le Chat workflow is generation-only. The Action
+        # dropdown + alt-paths (history / architecture) were removed —
+        # too few reviewers would use them to justify the dropdown
+        # noise, and slash-command routing isn't natively supported by
+        # Le Chat workflows. History and architecture remain available
+        # via the standalone web app's /history and /architecture pages.
 
         # Apply the per-run tier override. Activities downstream read
         # `settings.tier` so we mutate the singleton at the start of

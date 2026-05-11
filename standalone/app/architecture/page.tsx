@@ -77,6 +77,7 @@ flowchart TD
 `;
 
 const MODELS = [
+  { step: "Entity resolution (Step 0)", model: "mistral-small-2603", temp: "0.1", note: "Canonicalise short names ('Apple' → 'Apple Inc.'); refuse gibberish" },
   { step: "Research synthesis", model: "mistral-medium-2604", temp: "0.2", note: "Dense extraction over parallel signals" },
   { step: "Industry label polish", model: "mistral-small-2603", temp: "0.1", note: "Customer-facing label, breadth-preserving" },
   { step: "Generation", model: "mistral-medium-2604", temp: "0.7", note: "8 candidates (configurable), ≥3 novel" },
@@ -84,7 +85,7 @@ const MODELS = [
   { step: "Per-candidate verification", model: "mistral-small-2603", temp: "0.1", note: "Tavily + duplicate-detection + grounding extraction" },
   { step: "Selection + enrichment", model: "mistral-large-2512", temp: "0.4", note: "Customer-ready prose" },
   { step: "Polish", model: "mistral-small-2603", temp: "0.1", note: "Full-pool excerpts; converts unanchored markers" },
-  { step: "Meta-evaluate", model: "mistral-medium-2604", temp: "0.1", note: "Per-claim fact-check; atomic claim splitting (v7)" },
+  { step: "Meta-evaluate", model: "mistral-medium-2604", temp: "0.1", note: "Per-claim source verification; atomic claim splitting (v7); 0.80 SE-ready bar (v9.8)" },
   { step: "Web-verify rescue", model: "(no LLM)", temp: "—", note: "Deterministic 2-tier credibility classifier" },
   { step: "Source judge (v7)", model: "mistral-small-2603", temp: "0.1", note: "Claim ↔ source coherence" },
   { step: "Final qualify (v7)", model: "mistral-small-2603", temp: "0.1", note: "Surgical rewrite of unsupported numerics/entities" },
@@ -137,7 +138,7 @@ export default function Architecture() {
         <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6 mb-8">
           <Section
             title="Full pipeline"
-            subtitle="15 clickable steps · activities decorated with Mistral Workflows determinism rules"
+            subtitle="16 clickable steps · activities decorated with Mistral Workflows determinism rules"
           >
             <PipelineDiagram
               selectedId={selectedStepId}
@@ -280,7 +281,7 @@ export default function Architecture() {
             ID. Downstream stages cite these IDs instead of duplicating content.
             Meta-eval verifies claims against the entire pool; the v6 widening
             (every entry, not just the cited ones) was the fix that pushed
-            fact-check pass rates from ~70% to 100%.
+            source-anchored claim ratios from ~70% to 100% on the v6-v8 batch.
           </p>
         </Section>
 
@@ -306,10 +307,10 @@ export default function Architecture() {
               <span className="font-semibold text-white">Final-qualify</span>{" "}
               takes any number or named entity the whole chain couldn&apos;t anchor
               and rewrites it qualitatively in the prose, so the report doesn&apos;t
-              ship asserting unverified specifics. The fact-check pass rate at
-              the bottom of every report measures how many substantive claims
-              cleared this chain with an explicit anchored source — it is{" "}
-              <em>not</em> a measure of what fraction of the report is true.
+              ship asserting unverified specifics. The source-anchored claim
+              ratio at the bottom of every report measures how many substantive
+              claims cleared this chain with an explicit anchored source — it
+              is <em>not</em> a measure of what fraction of the report is true.
             </p>
           </div>
           <MermaidDiagram source={VERIFICATION_CHAIN_MERMAID} id="arch-verify" />
@@ -354,6 +355,10 @@ export default function Architecture() {
                 Rough $/run at current Mistral + Tavily pricing.
               </p>
               <ul className="text-sm text-slate-300 space-y-1.5">
+                <li className="flex justify-between">
+                  <span>Entity resolution (Small, Step 0)</span>
+                  <span className="font-mono text-mistral-orangeBright">$0.001</span>
+                </li>
                 <li className="flex justify-between">
                   <span>Research + gap-fill (Medium + Small)</span>
                   <span className="font-mono text-mistral-orangeBright">$0.010</span>

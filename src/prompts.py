@@ -480,6 +480,28 @@ Citation format:
   `[short anchor text](real-url-from-the-ledger)`. The URL must be the
   EXACT URL of a ledger entry whose `evidence_id` is in this candidate's
   evidence_ids. URLs not in the ledger are fabrication.
+
+INLINE LINK DENSITY — IMPORTANT (v9.8):
+- Aim for AT LEAST 2-3 inline markdown links per use case across the
+  combined `description` + `why_this_company` prose. Inline links are
+  the single biggest credibility signal in the rendered report — a
+  reviewer should be able to click any specific named claim and land
+  on its source.
+- Whenever you assert a SPECIFIC fact that has a supporting ledger entry
+  (a named partnership, a named program, a specific scale figure, a
+  named announcement, a regulatory framework reference), inline the
+  citation as a markdown link to that ledger entry's URL.
+- Concrete example — the prose:
+    "Carrefour committed to a 32% emissions reduction by 2030 as part
+     of its 2030 strategic plan."
+  becomes:
+    "Carrefour committed to a [32% emissions reduction by 2030
+     ([Carrefour 2030 climate plan](https://carrefour.com/.../climate-plan))
+     as part of its [2030 strategic plan](https://carrefour.com/...)."
+- Sparse-linking is the FAILURE mode v9.7 batch surfaced. Reports that
+  said "Apple has Private Cloud Compute infrastructure" without a link
+  to the source feel ungrounded even when the claim is true. Always
+  link when a URL exists for the fact you're asserting.
 - For precedents: prefer named-company prose ("comparable to Citylitics'
   predictive infrastructure platform") over raw IDs. The precedent ID
   is in the structured `inspired_by` field — don't put `google_cloud_*-...`
@@ -692,23 +714,37 @@ ILLUSTRATIVE CONTENT IS EXCLUDED FROM FACT-CHECKING:
 HONESTY MANDATE:
 - If you would advise a Mistral SE NOT to bring this to a customer in its
   current form, SAY SO. Set `sales_engineer_ready: false` and lower
-  `confidence`. A confidence below 0.6 means the report needs revision.
+  `confidence`. A confidence below 0.80 means light revision is suggested.
 - Do not soft-pedal weak reports. Don't optimize for sounding constructive
   at the expense of honest assessment.
+- That said, also do NOT under-score reports that are clearly well-
+  grounded. Sales-engineer-ready means "the customer pitch holds up", not
+  "every sentence is a literal copy of a source". A report that has 70%+
+  of substantive claims source-anchored, no major structural issues, and
+  reasonable peer framing IS customer-ready. Score it that way.
 
-CONFIDENCE CALIBRATION (use these anchors, do not default to 0.4):
-- 0.85-0.95 — Customer-ready. >85% of substantive claims directly supported
-  by literal quotes from cited sources. Specific named entities and source
-  URLs throughout. Minimal hedging. Sales engineer can pitch as-is.
-- 0.70-0.84 — Mostly ready, minor cleanup. 70-85% claims supported. A few
-  unsupported claims OR some loose language but the core proposals are
-  solid and grounded.
-- 0.55-0.69 — Significant cleanup needed. 50-70% claims supported. Multiple
-  unsupported quantitative claims OR a cross-cutting structural issue (e.g.,
-  one of three duplicates an existing initiative).
-- 0.40-0.54 — Major rework needed. <50% claims supported, OR fundamental
-  grounding issues throughout, OR duplicate flag triggered.
-- <0.40 — Report is not salvageable in current form.
+CONFIDENCE CALIBRATION (use these anchors — these bands are calibrated to
+the v9.8 verification chain; lean toward the high end of a band when the
+report has good grounding and minor issues, not toward the low end):
+- 0.85-0.97 — Customer-ready, polished. >80% of substantive claims directly
+  supported by literal quotes from cited sources. Specific named entities
+  and source URLs throughout. Minimal hedging. Sales engineer can pitch
+  as-is.
+- 0.75-0.84 — Customer-ready, light cleanup. 65-80% claims supported. A
+  few unsupported claims OR some loose language but the core proposals are
+  solid and grounded. Sales engineer can pitch with minor tweaks. THIS IS
+  THE "READY" BAND — do not under-score reports that fit here.
+- 0.60-0.74 — Solid draft, moderate revision suggested. 50-65% claims
+  supported. Multiple unsupported claims OR a single cross-cutting
+  structural issue worth flagging.
+- 0.45-0.59 — Needs meaningful rework. <50% claims supported OR fundamental
+  grounding issues throughout OR duplicate flag triggered.
+- <0.45 — Report is not salvageable in current form.
+
+The 0.80 sales-engineer-ready threshold matches the "Customer-ready, light
+cleanup" band's lower bound. Setting `sales_engineer_ready: true` is
+appropriate at 0.80+ when the report's proposals are sound even if the
+prose has a few loose claims that polish would catch.
 
 The `claims` list is the source of truth for the supported-fraction
 calculation — count `supported: true` / total. Anchor `confidence` to that

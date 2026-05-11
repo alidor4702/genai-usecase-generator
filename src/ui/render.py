@@ -454,7 +454,7 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
         ready_note = (
             "sales-engineer-ready"
             if meta.sales_engineer_ready
-            else "below the 0.70 SE-ready bar — see revision notes"
+            else "below the 0.80 SE-ready bar — see revision notes"
         )
         lines.append(
             f"**Meta-evaluator confidence**: `{meta.confidence:.2f}` ({ready_note})"
@@ -467,7 +467,7 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
 
 
 def _draft_banner_md(report: Report) -> str:
-    """Top-of-report banner shown when EITHER confidence is below the 0.70
+    """Top-of-report banner shown when EITHER confidence is below the 0.80
     bar OR the meta-evaluator marked the run not-ready. These are two
     separate signals — the threshold is a numerical floor, the
     sales_engineer_ready flag is the model's qualitative judgment based
@@ -483,28 +483,28 @@ def _draft_banner_md(report: Report) -> str:
     weakness = report.meta_review.weakness_reason or ""
     cross = report.meta_review.cross_cutting_concern or ""
 
-    if conf < 0.70 and not se_ready:
+    if conf < 0.80 and not se_ready:
         # Below threshold AND model flagged not-ready.
         headline = (
-            f"> **Confidence: `{conf:.2f}`** — below the `0.70` sales-engineer-ready bar. "
+            f"> **Confidence: `{conf:.2f}`** — below the `0.80` sales-engineer-ready bar. "
             f"The use cases below have been through the full verification chain "
             f"(numeric anchoring · per-claim fact-check · web-verify rescue · "
             f"source-judge · qualitative rewrite). The threshold gap reflects "
             f"citation density, not factual correctness. Suggestions for revision below."
         )
-    elif conf >= 0.70 and not se_ready:
+    elif conf >= 0.80 and not se_ready:
         # Confidence above bar but model flagged a strategic concern.
         headline = (
-            f"> **Confidence: `{conf:.2f}`** (at or above the `0.70` numerical bar) — "
+            f"> **Confidence: `{conf:.2f}`** (at or above the `0.80` numerical bar) — "
             f"but the meta-evaluator flagged a strategic concern requiring revision "
             f"before customer use. See the cross-cutting note below. The use cases "
             f"have been through the full verification chain; this gap is qualitative "
             f"(report-level reasoning), not a numerical/factual issue."
         )
-    elif conf < 0.70 and se_ready:
+    elif conf < 0.80 and se_ready:
         # Rare: model says ready but confidence is below the bar. Surface both.
         headline = (
-            f"> **Confidence: `{conf:.2f}`** — below the `0.70` numerical bar even "
+            f"> **Confidence: `{conf:.2f}`** — below the `0.80` numerical bar even "
             f"though the meta-evaluator marked the report sales-engineer-ready. "
             f"Review the per-claim breakdown below to decide whether to ship — "
             f"the signals disagree."
@@ -559,7 +559,7 @@ def render_report_to_chunks(report: Report) -> dict[str, Any]:
     exec_parts: list[str] = []
     if report.meta_review is not None and (
         not report.meta_review.sales_engineer_ready
-        or report.meta_review.confidence < 0.70
+        or report.meta_review.confidence < 0.80
     ):
         exec_parts.append(_draft_banner_md(report))
         exec_parts.append("")
@@ -633,7 +633,7 @@ def render_report_to_markdown(report: Report) -> str:
     # reviewer still sees every use case + the rejection chain below.
     if report.meta_review is not None and (
         not report.meta_review.sales_engineer_ready
-        or report.meta_review.confidence < 0.70
+        or report.meta_review.confidence < 0.80
     ):
         parts.append(_draft_banner_md(report))
         parts.append("")

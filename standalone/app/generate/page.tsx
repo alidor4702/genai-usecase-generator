@@ -581,7 +581,7 @@ function RunView({
         <section className="space-y-4">
           {reportData.meta_review &&
             (!reportData.meta_review.sales_engineer_ready ||
-              reportData.meta_review.confidence < 0.70) && (
+              reportData.meta_review.confidence < 0.80) && (
               <DraftBanner review={reportData.meta_review} />
             )}
           <div className="flex items-baseline justify-between">
@@ -666,7 +666,7 @@ function DraftBanner({
     <>
       Confidence{" "}
       <span className="text-amber-300 font-mono font-bold">{conf.toFixed(2)}</span>
-      {" "}is below the{" "}<span className="font-mono">0.70</span> sales-engineer-ready
+      {" "}is below the{" "}<span className="font-mono">0.80</span> sales-engineer-ready
       bar. The use cases have been through the full verification chain
       (numeric anchoring · per-claim source check · web-verify rescue ·
       source-judge · qualitative rewrite). The threshold gap reflects
@@ -676,26 +676,26 @@ function DraftBanner({
     </>
   );
 
-  if (conf >= 0.70 && !seReady) {
-    chipLabel = "Above the 0.70 bar — strategic revision suggested";
+  if (conf >= 0.80 && !seReady) {
+    chipLabel = "Above the 0.80 bar — strategic revision suggested";
     body = (
       <>
         Confidence{" "}
         <span className="text-amber-300 font-mono font-bold">{conf.toFixed(2)}</span>
-        {" "}is at or above the{" "}<span className="font-mono">0.70</span> numerical bar,
+        {" "}is at or above the{" "}<span className="font-mono">0.80</span> numerical bar,
         but the meta-evaluator flagged a strategic concern requiring
         revision before customer use. See the cross-cutting note below.
         This gap is qualitative (report-level reasoning), not numerical or
         factual.
       </>
     );
-  } else if (conf < 0.70 && seReady) {
+  } else if (conf < 0.80 && seReady) {
     chipLabel = "Signals disagree — light review suggested";
     body = (
       <>
         Confidence{" "}
         <span className="text-amber-300 font-mono font-bold">{conf.toFixed(2)}</span>
-        {" "}is below the{" "}<span className="font-mono">0.70</span> numerical bar even
+        {" "}is below the{" "}<span className="font-mono">0.80</span> numerical bar even
         though the meta-evaluator marked the report sales-engineer-ready.
         Review the per-claim breakdown below to decide whether to ship —
         the signals disagree.

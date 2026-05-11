@@ -22,6 +22,15 @@ type Phase = {
 
 const PHASES: Phase[] = [
   {
+    step: "resolve",
+    title: "0. Resolve the company name",
+    oneLine: "Figure out exactly which company the user meant.",
+    body:
+      "Before anything else, a quick AI call canonicalises the user's input. 'Apple' becomes 'Apple Inc.', 'Hermes' becomes 'Hermès International S.A.', 'HSBC' becomes 'HSBC Holdings plc'. If the input is gibberish or ambiguous (a person's name, a fruit, random keystrokes), it refuses early — in 1-2 seconds, before any expensive research starts. This catches the entire class of entity-drift bugs (Wikipedia returning the wrong article, the verified-companies index matching a substring) at the top of the pipeline instead of trying to clean up downstream.",
+    reads: ["The user's input", "World knowledge of real companies"],
+    produces: ["Canonical company name (or refusal)"],
+  },
+  {
     step: "research",
     title: "1. Research the company",
     oneLine: "Find out what the company actually does.",
@@ -104,7 +113,7 @@ export default function HowItWorks() {
             From a company name to three customer-ready GenAI use cases.
           </h1>
           <p className="mt-4 text-lg text-slate-300 leading-relaxed max-w-3xl">
-            The system runs seven phases. Each phase has one job. Each phase reads
+            The system runs eight phases. Each phase has one job. Each phase reads
             something specific and produces something specific that the next phase
             uses. You can see every step happening live in the Generate page.
           </p>
@@ -226,15 +235,19 @@ function FaqSection() {
     },
     {
       q: "Why three use cases, not five or ten?",
-      a: "Three is what a Mistral sales engineer can pitch in a single customer meeting. Twelve are generated under the hood; the top three after scoring + verification + de-duplication land in the deliverable. The other nine are kept in a 'rejected appendix' with one-line reasons.",
+      a: "Three is what a Mistral sales engineer can pitch in a single customer meeting. Eight candidates are generated under the hood (configurable, set to 8 since v9.3 — top-3 selectivity holds at this batch size); the top three after scoring + verification + de-duplication land in the deliverable. The rest are kept in a 'rejected appendix' with one-line reasons.",
     },
     {
       q: "How long does a run take?",
-      a: "About 2-4 minutes depending on research depth. Every step is observable live — you can watch the agents think, search, and write in real time on the Generate page.",
+      a: "About 2-4 minutes on standard tier depending on research depth. Fast tier (~2 min) trades polish quality for speed; max tier (~3-5 min) adds a second-pass critique-revise step and uses Mistral Large 3 for polish for the highest grounding density. Every step is observable live — you can watch the agents think, search, and write in real time on the Generate page.",
+    },
+    {
+      q: "What about the score? Is 0.79 bad?",
+      a: "No. The confidence number reflects citation density — how many specific claims have an explicit anchored source. A 0.79 report has been through the full verification chain (numeric anchoring, per-claim fact-check, web-verify rescue, source-judge, qualitative rewrite). The prose doesn't ship unverified specifics regardless of the score. Above 0.80 is sales-engineer-ready as-is; 0.65-0.80 means a sales engineer can pitch with light tweaks; below 0.60 means meaningful revision before customer use.",
     },
     {
       q: "Where can it go wrong?",
-      a: "If a company has very little public signal (tiny private firm, sparse Wikipedia), the system refuses gracefully instead of fabricating. If a relevant peer deployment isn't in the precedent corpus, the model anchors on a weaker match — solvable by widening the corpus over time. If the verification chain still rejects a real claim, the surgical rewriter qualifies the language so the report stays defensible.",
+      a: "If a company has very little public signal (tiny private firm, sparse Wikipedia), the system either resolves to the right entity but produces a lower-confidence report, or refuses gracefully if it can't identify the company at all. Apple-style cases (famously secretive companies with limited public technical detail) tend to score lower than companies with rich public reporting — that's the system being honest, not a system bug. If a relevant peer deployment isn't in the precedent corpus, the model anchors on a weaker match — solvable by widening the corpus over time.",
     },
   ];
   return (
