@@ -23,13 +23,13 @@ import logging
 from dataclasses import dataclass
 
 from src.activities.compute_signals import compute_quality_signals_activity
+from src.activities.entity_resolution import resolve_company_entity_activity
 from src.activities.generate import generate_candidates_activity
 from src.activities.final_qualify import final_qualitative_replacement_activity
 from src.activities.meta_evaluate import meta_evaluate_activity
 from src.activities.source_judge import judge_claim_sources_activity
 from src.activities.web_verify import web_verify_unsupported_claims_activity
 from src.activities.research import (
-    compute_entity_match_score,
     enrich_company_context_activity,
     research_company_activity,
 )
@@ -44,13 +44,6 @@ from src.models import (
     WorkflowInput,
 )
 from src.trace import RunTrace, start_run_trace
-
-# Entity-identity threshold (Fix #4). Below this, the user's input doesn't
-# fuzzy-match what research found — likely drift to a wrong entity. Tuned
-# from v9.4 data: real companies (Tesla, Joe's Pizza, etc.) score ≥85;
-# drift cases (ZYX Corp → Zynex Medical, asdfqwerty → quantum paper, empty
-# input) score below 70.
-_ENTITY_MATCH_THRESHOLD = 70.0
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +71,40 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
     trace = start_run_trace(params.company_name)
     log.info("pipeline: started for %s at %s", params.company_name, trace.started_at.isoformat())
 
+    # Step 0 — Upfront entity resolution (v9.7+). One Mistral Small call:
+    # "what canonical company is the user referring to?" Resolves ambiguous
+    # short names (Apple → Apple Inc., Hermes → Hermès International) and
+    # refuses gibberish / empty / unidentifiable inputs in ~1-2s before any
+    # downstream LLM work happens. Replaces the v9.5 rapidfuzz-WRatio
+    # entity-identity check which was substring-biased and got fooled by
+    # things like "Apple" being a substring of "Applegate".
+    log.info("=== Step 0: Entity resolution ===")
+    resolved = await resolve_company_entity_activity(params.company_name)
+    log.info(
+        "entity_resolution: resolved=%s canonical=%r confidence=%s reason=%r",
+        resolved.resolved, resolved.canonical_name, resolved.confidence, resolved.reason,
+    )
+    if not resolved.resolved or not resolved.canonical_name:
+        return PipelineResult(
+            refused=True,
+            report=None,
+            trace=trace,
+            ledger=EvidenceLedger(),
+            refusal_reason=(
+                f"Couldn't identify a specific company for {params.company_name!r}. "
+                f"{resolved.reason} "
+                f"Try the company's full legal name (e.g. 'Apple Inc.' instead of "
+                f"'Apple')."
+            ),
+        )
+    # If the LLM rewrote the input to a canonical name, use that downstream.
+    if resolved.canonical_name and resolved.canonical_name.lower().strip() != params.company_name.lower().strip():
+        log.info(
+            "entity_resolution: rewriting %r → %r for downstream research",
+            params.company_name, resolved.canonical_name,
+        )
+        params = params.model_copy(update={"company_name": resolved.canonical_name})
+
     # Step 1 — Research
     log.info("=== Step 1: Research ===")
     ctx, ledger, bundle = await research_company_activity(params.company_name, params.research_depth)
@@ -89,31 +116,6 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
         ctx.meta.research_sources,
         len(ledger.entries),
     )
-
-    # Step 1a — Entity-identity check (Fix #4 from v9.4 analysis).
-    # Refuse early when the user's input doesn't fuzzy-match the entity
-    # research actually found. Catches the drift cases the OR-gate below
-    # would miss because research populated `existing_ai_initiatives` for
-    # the wrong entity (e.g. empty input → SoundHound AI, "ZYX Corporation"
-    # → Zynex Medical). Failing here saves ~80-100s of wasted enrich +
-    # downstream work on a wrong-entity report.
-    entity_match_score = compute_entity_match_score(params.company_name, bundle)
-    log.info("entity_match_score=%.0f (threshold=%.0f)", entity_match_score, _ENTITY_MATCH_THRESHOLD)
-    if entity_match_score < _ENTITY_MATCH_THRESHOLD:
-        log.warning(
-            "Entity-identity refusal: input=%r research-found-entity is too different (score=%.0f)",
-            params.company_name, entity_match_score,
-        )
-        return PipelineResult(
-            refused=True,
-            report=None,
-            trace=trace,
-            ledger=ledger,
-            refusal_reason=(
-                f"Couldn't find a clear company match for {params.company_name!r}. "
-                f"Try the legal name or parent brand."
-            ),
-        )
 
     # Step 1b — Context completion (gap-fill). Pass the original bundle through
     # so re-synthesis uses the same depth signal instead of re-fetching at LOW.
@@ -135,6 +137,12 @@ async def execute_pipeline(params: WorkflowInput) -> PipelineResult:
     # entity. The 2-of-3 rule plus the "very high confidence alone is fine"
     # escape preserves all 24 real-company v9.4 runs (each had all 3
     # signals true) while catching the drift cases.
+    #
+    # Note: v9.7 briefly added an industry=Unknown sub-gate that turned out
+    # to be too aggressive (Hermès has industry=Unknown but still produces
+    # high-quality reports — the synthesizer just couldn't pin the field).
+    # Rolled back in v9.7+; entity drift is now caught by the upfront
+    # `resolve_company_entity_activity` step instead.
     confidence_signals = [
         ctx.meta.research_confidence >= settings.research_confidence_threshold,
         ctx.meta.is_verified,

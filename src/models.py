@@ -164,8 +164,11 @@ class WorkflowInput(BaseModel):
         description=(
             "What you want me to do. "
             "Generate use cases — full pipeline for the company below (default). "
-            "Browse past runs — show the last 10 reports (company field optional). "
-            "View architecture — quick pipeline summary + link to the full /architecture page."
+            "Browse past runs — show the last 10 reports. "
+            "View architecture — pipeline summary + link to the full /architecture page. "
+            "Tip: you can also just type 'history' or 'architecture' in the company "
+            "field below and I'll auto-detect the intent — no need to change this "
+            "dropdown."
         ),
     )
     company_name: str = Field(
@@ -176,7 +179,10 @@ class WorkflowInput(BaseModel):
             "The company you want GenAI use cases for. "
             "Examples: Carrefour, Mistral AI, L'Oréal, Veolia, BNP Paribas. "
             "Any public company by legal or trade name works. "
-            "(For Browse past runs / View architecture, type any name — it's ignored.)"
+            "Use the company's FULL legal name for ambiguous short names — "
+            "type 'Apple Inc.' (not just 'Apple') so research finds the right entity. "
+            "Also accepts command words: 'history' or 'architecture' to switch the "
+            "action without using the dropdown above."
         ),
     )
     focus_area: FocusArea = Field(

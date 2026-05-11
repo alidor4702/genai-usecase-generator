@@ -342,11 +342,16 @@ WEB_SEARCH_TOOL_SPEC: dict[str, Any] = {
     },
 }
 
-_TIER_TOOL_BUDGET: dict[str, int] = {"fast": 0, "standard": 2, "max": 4}
+_TIER_TOOL_BUDGET: dict[str, int] = {"fast": 0, "standard": 2, "max": 6}
 
 
 def _max_tool_calls() -> int:
-    """Web-search budget per tier. fast=0 (no web search), standard=2, max=4."""
+    """Web-search budget per tier. fast=0 (no web search), standard=2, max=6.
+
+    Max bumped from 4 → 6 in v9.7 — the insane-mode batch wants more
+    primary-source grounding. Each call adds ~4s wall time and one
+    ledger entry.
+    """
     return _TIER_TOOL_BUDGET.get(settings.tier.value, 4)
 
 

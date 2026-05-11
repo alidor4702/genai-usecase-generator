@@ -58,7 +58,10 @@ async def _deep_read_body(http: httpx.AsyncClient, url: str) -> str:
     if html is None:
         return ""
     try:
-        return extract_main_text(html, max_chars=12000) or ""
+        # Max tier reads 16K chars per body for denser anchoring; other
+        # tiers stay at the v9.5 12K cap.
+        cap = 16000 if settings.tier.value == "max" else 12000
+        return extract_main_text(html, max_chars=cap) or ""
     except Exception as e:
         logger.warning("web_verify._deep_read_body: extract failed (%s) — %s", url, type(e).__name__)
         return ""

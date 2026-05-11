@@ -52,12 +52,12 @@ with _temporal_workflow.unsafe.imports_passed_through():
         list_recent_runs_activity,
     )
     from src.activities.compute_signals import compute_quality_signals_activity
+    from src.activities.entity_resolution import resolve_company_entity_activity
     from src.activities.final_qualify import final_qualitative_replacement_activity
     from src.activities.generate import generate_candidates_activity
     from src.activities.meta_evaluate import meta_evaluate_activity
     from src.activities.render_report import render_report_activity
     from src.activities.research import (
-        compute_entity_match_score,
         enrich_company_context_activity,
         research_company_activity,
     )
@@ -178,6 +178,29 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
     async def run(self, params: WorkflowInput) -> workflows_mistralai.ChatAssistantWorkflowOutput:
         self.company_name = params.company_name
 
+        # Natural-language command detection — user can type "history",
+        # "show me history", "architecture", etc. into the company field
+        # and the workflow auto-routes to the corresponding action,
+        # without needing to pick from the dropdown. This makes Le Chat
+        # feel conversational instead of form-driven.
+        company_lower = (params.company_name or "").strip().lower()
+        _HISTORY_TRIGGERS = {
+            "history", "show history", "show me history", "show me the history",
+            "past runs", "list runs", "browse runs", "browse past runs",
+            "show past runs", "recent runs",
+        }
+        _ARCH_TRIGGERS = {
+            "architecture", "arch", "show architecture", "view architecture",
+            "show me architecture", "show me the architecture",
+            "how it works", "pipeline", "show pipeline",
+        }
+        if company_lower in _HISTORY_TRIGGERS:
+            logger.info("workflow: detected history command in company field")
+            params = params.model_copy(update={"action": Action.HISTORY})
+        elif company_lower in _ARCH_TRIGGERS:
+            logger.info("workflow: detected architecture command in company field")
+            params = params.model_copy(update={"action": Action.ARCHITECTURE})
+
         # Action branching — the entry form lets the user pick HISTORY or
         # ARCHITECTURE instead of GENERATE. Both alt actions return a
         # single markdown chunk and finish; only GENERATE runs the full
@@ -228,6 +251,38 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
         # checklist in a sidebar/composer surface — wrong place;
         # users want the steps inside the chat thread.
 
+        # ── Step 0: Entity resolution ────────────────────────────────
+        # Upfront LLM call: "what canonical company is the user asking
+        # about?" Replaces v9.5's substring-biased fuzzy-match check.
+        # Resolves Apple → Apple Inc., Hermes → Hermès International, etc.
+        # Refuses gibberish / empty / unidentifiable inputs in ~1-2s.
+        self.current_step = "resolve_entity"
+        self.progress_percent = 2.0
+        resolved = await resolve_company_entity_activity(params.company_name)
+        logger.info(
+            "workflow: entity_resolution — resolved=%s canonical=%r confidence=%s",
+            resolved.resolved, resolved.canonical_name, resolved.confidence,
+        )
+        if not resolved.resolved or not resolved.canonical_name:
+            self.current_step = "refused"
+            refuse_msg = (
+                f"I couldn't identify a specific company for **{params.company_name}**. "
+                f"{resolved.reason}\n\n"
+                f"Try the company's full legal name — e.g. 'Apple Inc.' instead of "
+                f"'Apple', 'HSBC Holdings' instead of 'HSBC'."
+            )
+            return workflows_mistralai.ChatAssistantWorkflowOutput(
+                content=[workflows_mistralai.TextOutput(text=refuse_msg)]
+            )
+        # Rewrite the company name to the canonical form for all downstream activities
+        if resolved.canonical_name and resolved.canonical_name.lower().strip() != params.company_name.lower().strip():
+            logger.info(
+                "workflow: entity rewrite %r → %r",
+                params.company_name, resolved.canonical_name,
+            )
+            self.company_name = resolved.canonical_name
+            params = params.model_copy(update={"company_name": resolved.canonical_name})
+
         # ── Research ──────────────────────────────────────────────────
         self.current_step = "research"
         self.progress_percent = 5.0
@@ -241,23 +296,6 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             ctx, ledger, bundle = await research_company_activity(
                 params.company_name, params.research_depth
             )
-
-            # Entity-identity check (Fix #4) — refuse early when input
-            # doesn't fuzzy-match what research found. Mirrors pipeline.py.
-            entity_match_score = compute_entity_match_score(params.company_name, bundle)
-            logger.info(
-                "workflow: entity_match_score=%.0f (threshold=70)", entity_match_score
-            )
-            if entity_match_score < 70.0:
-                self.current_step = "refused"
-                logger.warning(
-                    "workflow: entity-identity refusal — input=%r score=%.0f",
-                    params.company_name, entity_match_score,
-                )
-                return _build_refusal_output(
-                    params.company_name, ctx.meta.research_sources
-                )
-
             ctx, ledger = await enrich_company_context_activity(ctx, ledger, bundle)
             logger.info(
                 "workflow: evidence ledger seeded with %d entries", len(ledger.entries)
@@ -283,6 +321,11 @@ class GenAIUseCaseWorkflow(workflows.InteractiveWorkflow):
             sum(confidence_signals) >= 2
             or ctx.meta.research_confidence >= 0.80
         )
+
+        # v9.7 briefly added an industry=Unknown sub-gate — rolled back here
+        # because it broke Hermès (Hermès gets industry=Unknown but ships
+        # quality reports). Entity drift is now caught earlier by
+        # `resolve_company_entity_activity` instead.
         if not confidence_ok:
             self.current_step = "refused"
             return _build_refusal_output(

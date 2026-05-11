@@ -520,6 +520,193 @@ def _coerce_enriched(
     )
 
 
+_CRITIQUE_REVISE_SYSTEM = """\
+You are reviewing three customer-ready GenAI use cases drafted by a previous
+LLM pass. Your job: find and fix the specific failure modes that the
+downstream verification chain will reject, BEFORE it reaches them.
+
+You will receive:
+- The three use cases (id, title, description, why_this_company,
+  top_implementation_risk)
+- The company context for grounding reference
+
+Output a revised version of each use case with the failure modes fixed.
+
+FAILURE MODES TO FIND AND FIX (in priority order):
+
+1. INVENTED OUTCOME PERCENTAGES — the proposed system claims a specific
+   outcome percentage with no source. v9.4-v9.6 analysis showed this was
+   the #1 cause of judge-rejected claims. Examples to FIX:
+     "reduces manual review time by 40-60%"
+     "22% higher completion rates"
+     "25-35% higher click-through rates"
+     "drives 15-25% retention increase"
+   REWRITE these as qualitative outcome language IN THE SAME SENTENCE:
+     "materially reduces manual review effort"
+     "lifts completion rates vs. static baselines (magnitude
+      segment-dependent)"
+     "typically lifts click-through; magnitude depends on creative and
+      audience"
+     "drives retention uplift; specific magnitude depends on segment
+      economics"
+
+2. ANONYMOUS PEER ATTRIBUTIONS — "comparable deployments report 20-40%
+   improvements", "peer X reported Y%" where Y has no source. Same fix
+   pattern: replace with qualitative phrasing ("material improvements",
+   "meaningful gains").
+
+3. GENERIC FILLER — "enables enterprise-grade compliance",
+   "leverages industry-leading capabilities" without naming the
+   specific frameworks, data flows, or company context. Replace with
+   concrete hooks from the company context (named regulations, specific
+   data assets, named products).
+
+4. CROSS-USE-CASE OVERLAP — if two use cases lean on the same workflow,
+   data asset, or user persona in their prose, tighten the
+   differentiation. Highlight what makes each one distinct.
+
+5. MISSING COMPANY-SPECIFIC ANCHORS — prose at industry generality
+   ("any retailer would benefit") should be replaced with company-specific
+   anchors when the company context provides them.
+
+DO NOT:
+- Add NEW claims that aren't already in the prose. You're cleaning up
+  existing prose, not extending it.
+- Add fictional partnerships, brands, products, or numbers.
+- Remove correctly-anchored claims that have a markdown link to a real
+  source — those have already passed verification at draft time.
+
+DO:
+- Keep all correctly-anchored claims and markdown links exactly as-is.
+- Replace invented outcome percentages with qualitative language IN THE
+  SAME SENTENCE so the rewrite reads naturally.
+- Tighten generic phrasing to concrete company-specific hooks where the
+  company context allows it.
+- Preserve sentence count and prose length approximately (within 20%);
+  this is a quality pass, not a length pass.
+
+Output STRICT JSON, one revision per use case:
+{
+  "revisions": [
+    {
+      "id": "<use_case_id from input>",
+      "description": "<revised description>",
+      "why_this_company": "<revised why_this_company>",
+      "top_implementation_risk": "<revised top_implementation_risk>"
+    },
+    ...3 items
+  ]
+}
+"""
+
+
+async def _critique_and_revise_use_cases(
+    enriched: list[EnrichedUseCase],
+    ctx: CompanyContext,
+    client: Mistral,
+) -> int:
+    """Max-tier-only second-pass critique + revise on enriched use cases.
+
+    Runs Mistral Large 3 on the drafted use cases targeting the specific
+    failure modes the v9.4-v9.6 batches surfaced (invented outcome %s,
+    anonymous peer attributions, generic filler, cross-use-case overlap).
+    Mutates the EnrichedUseCase list in-place. Returns count of fields
+    modified. Adds ~40-80s wall time on max tier.
+
+    Cost: one Mistral Large 3 call per run on max. ~$0.04-0.06.
+
+    Skipped on fast and standard — this is the dedicated max-tier quality
+    lever.
+    """
+    if not enriched:
+        return 0
+
+    use_cases_block = [
+        {
+            "id": uc.id,
+            "title": uc.title,
+            "description": uc.description,
+            "why_this_company": uc.why_this_company,
+            "top_implementation_risk": uc.top_implementation_risk,
+        }
+        for uc in enriched
+    ]
+
+    user = (
+        "# Company context (for grounding reference — do NOT add new claims "
+        "from this; you're cleaning the drafted prose)\n"
+        + ctx.model_dump_json(indent=2)
+        + "\n\n# Three drafted use cases to review and revise\n"
+        + json.dumps(use_cases_block, indent=2, ensure_ascii=False)
+        + "\n\nReturn STRICT JSON per the schema in the system prompt."
+    )
+
+    try:
+        async with trace_step(
+            "critique_revise",
+            settings.mistral_enrichment_model,
+            "chat.complete",
+            inputs_summary=f"critiquing {len(enriched)} use cases (max tier)",
+        ) as ev:
+            r = await client.chat.complete_async(
+                model=settings.mistral_enrichment_model,
+                temperature=0.3,
+                max_tokens=10_000,
+                timeout_ms=240_000,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": _CRITIQUE_REVISE_SYSTEM},
+                    {"role": "user", "content": user},
+                ],
+            )
+            text = r.choices[0].message.content
+            if isinstance(text, list):
+                text = "".join(getattr(b, "text", "") for b in text)
+            data = json.loads(_strip_fence(str(text or "{}")))
+            ev.outputs_summary = (
+                f"received {len(data.get('revisions', []))} revisions"
+            )
+    except Exception as e:
+        logger.warning("critique_revise: failed: %s", type(e).__name__)
+        return 0
+
+    revisions = data.get("revisions", [])
+    if not isinstance(revisions, list):
+        return 0
+
+    revisions_by_id: dict[str, dict[str, object]] = {}
+    for rev in revisions:
+        if isinstance(rev, dict) and rev.get("id"):
+            revisions_by_id[str(rev["id"])] = rev
+
+    modified = 0
+    for uc in enriched:
+        rev = revisions_by_id.get(uc.id)
+        if not rev:
+            continue
+        new_desc = str(rev.get("description") or uc.description)
+        new_why = str(rev.get("why_this_company") or uc.why_this_company)
+        new_risk = str(
+            rev.get("top_implementation_risk") or uc.top_implementation_risk
+        )
+        if new_desc.strip() and new_desc != uc.description:
+            uc.description = new_desc
+            modified += 1
+        if new_why.strip() and new_why != uc.why_this_company:
+            uc.why_this_company = new_why
+            modified += 1
+        if new_risk.strip() and new_risk != uc.top_implementation_risk:
+            uc.top_implementation_risk = new_risk
+            modified += 1
+
+    if modified:
+        logger.info(
+            "critique_revise: revised %d fields across %d use cases",
+            modified, len(enriched),
+        )
+    return modified
+
+
 _POLISH_SYSTEM = """\
 You are polishing customer-facing AI use case prose for delivery to a Mistral
 sales engineer. The text has been through automated checks and contains
@@ -894,18 +1081,23 @@ async def _polish_use_case(
         '"time_to_value": "...", "top_implementation_risk": "...", '
         '"cited_evidence_ids": ["ev-...", ...]}'
     )
+    # Polish model tier dispatch:
+    # - fast: polish is skipped entirely (caller never invokes this fn on fast)
+    # - standard: Mistral Small with strict _POLISH_SYSTEM. v9.6 settled on
+    #   Small after v9.5 Medium added 30-60s wall time without quality lift.
+    # - max: Mistral Large 3 (the enrichment model). v9.7 insane-mode —
+    #   premium polish for premium tier. Adds ~25-40s but produces tighter
+    #   citation discipline + better prose flow.
+    polish_model = (
+        settings.mistral_enrichment_model
+        if settings.tier.value == "max"
+        else settings.mistral_scoring_model
+    )
+    polish_timeout = 240_000 if settings.tier.value == "max" else 90_000
     try:
-        # Polish runs on Mistral Small with the strict _POLISH_SYSTEM prompt.
-        # v9.5 tried Medium for nuance, but it cost +30-60s wall time on
-        # standard runs and demoted SAP from SE-ready while the pass rate
-        # stayed identical (the extra prose density just produced more
-        # judge-extractable claims for the same supported/total ratio).
-        # v9.6 reverts to Small but keeps the strict prompt — the prompt
-        # rule itself ("only cite if exact entity AND figure match") is
-        # what drives quality, the model size matters less.
         async with trace_step(
             "polish",
-            settings.mistral_scoring_model,
+            polish_model,
             "chat.complete",
             inputs_summary=(
                 f"use_case={use_case.id} unanchored={has_unanchored} "
@@ -913,10 +1105,10 @@ async def _polish_use_case(
             ),
         ) as ev:
             r = await client.chat.complete_async(
-                model=settings.mistral_scoring_model,
+                model=polish_model,
                 temperature=0.1,
                 max_tokens=5000,
-                timeout_ms=90_000,
+                timeout_ms=polish_timeout,
                 response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": _POLISH_SYSTEM},
@@ -1169,6 +1361,18 @@ async def select_and_enrich_activity(
             )
         )
 
+    # Max-tier critique-revise pass (v9.7 insane mode). Targets the
+    # specific failure modes the v9.4-v9.6 batches surfaced — invented
+    # outcome %s, anonymous peer attributions, generic filler, cross-use-
+    # case overlap. Mistral Large 3 reviews the drafted prose and rewrites
+    # the offending sentences qualitatively BEFORE numeric scrub +
+    # polish run. Skipped on fast/standard.
+    total_critique_fixes = 0
+    if settings.tier.value == "max":
+        total_critique_fixes = await _critique_and_revise_use_cases(
+            enriched, ctx, client
+        )
+
     # Numeric anchoring scrub — mark percentages / scale figures / dollar
     # amounts that don't literally appear in a cited precedent or ledger entry.
     # The polish pass below converts the [unanchored: X] markers into
@@ -1276,12 +1480,13 @@ async def select_and_enrich_activity(
     logger.info(
         "select_enrich: enriched %d use cases | %d rejected appendix entries | "
         "%d unanchored numeric claims marked | %d polish field-rewrites | "
-        "%d attribution fixes",
+        "%d attribution fixes | %d critique-revise field-rewrites",
         len(enriched),
         len(rejected),
         total_unanchored,
         total_polished,
         total_attribution_fixes,
+        total_critique_fixes,
     )
 
     # Defensive assert — Tesla v9.4 ran into a cryptic Pydantic ValidationError

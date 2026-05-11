@@ -467,26 +467,53 @@ def _quality_footer_md(signals: QualitySignals, meta: MetaEvalReview | None) -> 
 
 
 def _draft_banner_md(report: Report) -> str:
-    """Top-of-report banner shown when meta-eval flagged the run as
-    below the SE-ready threshold. Frames the verdict as a revision
-    note, not a "this is broken" alert — every claim has been through
-    the full verification chain (numeric scrub + polish + meta-eval
-    + web-verify + source-judge + final-qualify), so the prose doesn't
-    ship unverified specifics. The threshold gap is about citation
-    density, not factual integrity.
+    """Top-of-report banner shown when EITHER confidence is below the 0.70
+    bar OR the meta-evaluator marked the run not-ready. These are two
+    separate signals — the threshold is a numerical floor, the
+    sales_engineer_ready flag is the model's qualitative judgment based
+    on cross-cutting concerns. The banner differentiates which signal
+    is the issue so the reader doesn't get confused (e.g. confidence
+    0.75 above bar + flag=False is a STRATEGIC concern, not a numerical
+    gap — different action needed).
     """
     if report.meta_review is None:
         return ""
     conf = report.meta_review.confidence
+    se_ready = report.meta_review.sales_engineer_ready
     weakness = report.meta_review.weakness_reason or ""
     cross = report.meta_review.cross_cutting_concern or ""
-    lines = [
-        f"> **Confidence: `{conf:.2f}`** — below the `0.70` sales-engineer-ready bar. "
-        f"The use cases below have been through the full verification chain "
-        f"(numeric anchoring · per-claim fact-check · web-verify rescue · "
-        f"source-judge · qualitative rewrite). The threshold gap reflects "
-        f"citation density, not factual correctness. Suggestions for revision below."
-    ]
+
+    if conf < 0.70 and not se_ready:
+        # Below threshold AND model flagged not-ready.
+        headline = (
+            f"> **Confidence: `{conf:.2f}`** — below the `0.70` sales-engineer-ready bar. "
+            f"The use cases below have been through the full verification chain "
+            f"(numeric anchoring · per-claim fact-check · web-verify rescue · "
+            f"source-judge · qualitative rewrite). The threshold gap reflects "
+            f"citation density, not factual correctness. Suggestions for revision below."
+        )
+    elif conf >= 0.70 and not se_ready:
+        # Confidence above bar but model flagged a strategic concern.
+        headline = (
+            f"> **Confidence: `{conf:.2f}`** (at or above the `0.70` numerical bar) — "
+            f"but the meta-evaluator flagged a strategic concern requiring revision "
+            f"before customer use. See the cross-cutting note below. The use cases "
+            f"have been through the full verification chain; this gap is qualitative "
+            f"(report-level reasoning), not a numerical/factual issue."
+        )
+    elif conf < 0.70 and se_ready:
+        # Rare: model says ready but confidence is below the bar. Surface both.
+        headline = (
+            f"> **Confidence: `{conf:.2f}`** — below the `0.70` numerical bar even "
+            f"though the meta-evaluator marked the report sales-engineer-ready. "
+            f"Review the per-claim breakdown below to decide whether to ship — "
+            f"the signals disagree."
+        )
+    else:
+        # Defensive: caller only fires this banner when one signal is bad.
+        return ""
+
+    lines = [headline]
     if cross:
         lines.append(">")
         lines.append(f"> **Cross-cutting improvement note:** {cross}")

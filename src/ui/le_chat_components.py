@@ -152,11 +152,12 @@ def build_report_component_tree(
     children: list[UIComponent] = []
 
     # ── Status banner ────────────────────────────────────────────────
-    # Frame the verdict as a quality signal, not a "this is broken" alert.
-    # Every claim has been through the full verification chain (numeric
-    # scrub + meta-eval + web-verify + source-judge + final-qualify) — the
-    # prose doesn't ship unverified specifics regardless of the score.
-    # The threshold gap is about citation density, not factual integrity.
+    # Confidence (a 0-1 float) and sales_engineer_ready (the model's binary
+    # judgment) are SEPARATE signals. Confidence is a numerical floor;
+    # sales_engineer_ready is qualitative — the model can mark the report
+    # not-ready due to a strategic concern even when confidence is above
+    # the 0.70 bar. The banner differentiates which signal is the issue
+    # so a confidence-0.75-but-flagged report doesn't read as contradictory.
     if sales_engineer_ready and (confidence is None or confidence >= 0.70):
         banner_variant = "success"
         banner_title = "Sales-engineer-ready"
@@ -167,9 +168,20 @@ def build_report_component_tree(
             + "per-claim fact-check · web-verify rescue · source-judge · qualitative "
             + "rewrite) and are ready to share."
         )
+    elif confidence is not None and confidence >= 0.70 and not sales_engineer_ready:
+        banner_variant = "warning"
+        banner_title = "Above 0.70 bar, but flagged for strategic revision"
+        banner_body_text = (
+            f"Confidence `{confidence:.2f}` is at or above the `0.70` numerical bar, "
+            f"but the meta-evaluator marked the report not sales-engineer-ready. "
+            f"This is a qualitative concern (report-level reasoning), not a numerical "
+            f"or factual issue — see the cross-cutting note below for what to revise. "
+            f"The use cases have been through the full verification chain; the prose "
+            f"doesn't assert unverified specifics."
+        )
     elif confidence is not None and confidence < 0.55:
         banner_variant = "warning"
-        banner_title = "Confidence below SE-ready bar — revision suggested"
+        banner_title = "Confidence well below SE-ready bar — revision suggested"
         banner_body_text = (
             f"Confidence `{confidence:.2f}` is well below the `0.70` bar. The use "
             f"cases below have still been through the full verification chain — "
