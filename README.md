@@ -27,7 +27,8 @@ The Mistral team's evaluation criteria — methodology, architecture, code quali
 - Type a company name (try `Carrefour` for the cleanest sample, `Mistral AI` to see the cat-ear logo Easter egg). Watch the live agent feed, get a structured report with grounding chips.
 
 **2. Le Chat assistant:**
-- `chat.mistral.ai` → Assistants → search **"GenAI Use Case Generator"** → Install → chat. Type a company name; the assistant runs the full pipeline (~3-5 min) with a live `TodoList` checklist showing each phase. Final report renders inline as chunked markdown + mermaid blueprints.
+- **Direct link**: [`https://chat.mistral.ai/chat?workflow-version-id=019e0a06-e2f9-75a7-b0ca-c33aa6c4f3ba`](https://chat.mistral.ai/chat?workflow-version-id=019e0a06-e2f9-75a7-b0ca-c33aa6c4f3ba) — click to open Le Chat with the **GenAI Use Case Generator** workflow pre-loaded. Type a company name (`Apple`, `Carrefour`, `Hermes`…) — entity resolution canonicalises the input upfront, the full pipeline runs (~2-4 min on standard tier) with live progress, and the final report renders inline with structured cards + mermaid blueprints.
+- Alternative: `chat.mistral.ai` → Assistants → search **"GenAI Use Case Generator"** → Install → chat.
 - See [`docs/publish_le_chat.md`](docs/publish_le_chat.md) for publish steps.
 
 **3. Locally (CLI):**
@@ -41,10 +42,10 @@ uv run python -m scripts.run_example "Carrefour" --out docs/examples/local/carre
 
 ## What good output looks like
 
-For Carrefour (v9.1, latest batch in [`docs/examples/v9_1/`](docs/examples/v9_1)):
+For Carrefour (v9.8, latest batches in [`docs/benchmarks/v9_4/`](docs/benchmarks/v9_4) through [`docs/benchmarks/v9_9/`](docs/benchmarks/v9_9)):
 
-- **Fact-check pass rate:** 92% (24/26 substantive claims supported by retrieved sources)
-- **Meta-evaluator confidence:** 0.77 — sales-engineer-ready
+- **Source-anchored claim ratio:** 83-92% across recent runs (24-26 substantive claims with explicit source support)
+- **Meta-evaluator confidence:** 0.65-0.92 depending on run (SE-ready bar: ≥ 0.80 since v9.8)
 - **Per-claim transparency block** with chips: `[verified ↗ Reuters]` / `[corrected ↗ → 56 countries]` / `[judge: rejected]` / `[rewritten qualitatively]`
 - Three customer-ready use cases:
   1. *AI-powered own-brand nutritional insight engine for the 14k-store network*
@@ -61,15 +62,18 @@ For Carrefour (v9.1, latest batch in [`docs/examples/v9_1/`](docs/examples/v9_1)
 ```
 Company name + knobs
    │
+   0. Resolve entity (Mistral Small) — canonicalise short names → "Apple" → "Apple Inc."
+                                      → refuse gibberish / empty in 1-2s
    1. Research (Wikipedia + news + jobs + existing AI initiatives)
    1b. Gap-fill targeted Tavily searches
    2. Retrieve top-k peer precedents (cosine over 2,150 corpus)
-   3. Generate 8 candidates (Mistral Medium + web_search tool, ≥3 novel) [configurable, was 12 pre-v9.3]
+   3. Generate 8 candidates (Mistral Medium + web_search tool, ≥3 novel)
    4. Score against 5 criteria (Mistral Small × 2 self-consistency)
    5. Verify top-3 via Tavily + duplicate-detection + supporting-snippet extraction
    6. Select + enrich top-3 (Mistral Large 3, customer-ready prose)
-   6a. Polish (full-pool excerpts; numbers stay if pool supports)
-   7. Meta-evaluate (per-claim fact-check, atomic claim splitting, feature-desc filter)
+   6a. Polish (strict citation discipline: cite only on exact entity AND figure match)
+   6b. (max tier only) Critique + revise (Mistral Large 3 second pass)
+   7. Meta-evaluate (per-claim source verification, atomic claim splitting)
    7c. Web-verify rescue (Tavily; 2-tier credibility)
    7d. Source-judge (3-verdict: supported / corrected / unsupported)
    7e. Final qualify (surgical rewrite of unsupported numerics)
@@ -123,6 +127,9 @@ The most distinctive thing about this build is what happens AFTER the LLM produc
 | **v9** | **Self-correcting judge** — third verdict `corrected`. When source contradicts a numeric/rank/temporal claim with a clean replacement, the judge returns the corrected value as a drop-in phrase; the system patches the prose inline + attaches the source link + marks the claim with a `[corrected ↗ → <value>]` chip. Restricted to numerics (entity contradictions stay unsupported — silent entity-substitution would break downstream prose). + drop regen_one (~50s saved), parallelize verify deep-read, source_judge concurrency 4→8. | Closes the loop: real fabrications get rewritten with the actual value, not just qualified out. |
 | **v9.1** | Phantom-claim post-process strip (LLM was copying prompt template literals as claims). Feature-description filter strengthened with "Acme Corp swap test". Source-judge extends to all supported claims (was URL-only). | Removed extraction noise. Catches the L'Oreal Galderma slip-through (supporting quote didn't actually mention the brands). |
 | **v9.2** | Two surgical prompt edits — judge accepts inference-from-context (Paris HQ → EU regulatory alignment); generation prompt blocks superlatives ("ONLY EU-sovereign") via the existing peer-attribution rule. | Recovers reasonable inferences without adding new logic; closes a generation-prompt gap. |
+| **v9.4-v9.6** | 28-run heavy batch + targeted A/B tests. **Bracket / fake (ev-XXX) cleanup pass.** **Refusal gate hardened to 2-of-3 signals.** **Polish prompt rewritten** to require exact entity-AND-figure match before attaching a citation. **Deep-read content bumps** (3K→6K, 6K→10K, 8K→12K). Banner UX 3-way branched. | Fixed the fast > standard regression on Spotify/Hermès/Bouygues caused by polish over-zealously adding marginal citations the judge then rejected. |
+| **v9.7** | **Generate + enrich prompt hardening** — no invented outcome percentages for the proposed system (`achieves 25-40% improvement` style claims). **Max tier insane mode** — polish on Mistral Large 3, second-pass critique-revise call, web_search budget 4→6, deep-read 12K→16K. | The #1 cause of judge-rejected claims across v9.4-v9.6 was the model writing specific outcome percentages with no source. Stopped at the source rather than cleaning up after. |
+| **v9.8** | **Upfront entity resolution** — one Mistral Small call resolves user input to a canonical company name BEFORE any research happens (`Apple` → `Apple Inc.`). Replaces the v9.5 rapidfuzz-WRatio heuristic that got fooled by substring matches (`Apple` ⊂ `Applegate`). Refuses gibberish/empty in <2s. **SE-ready bar bumped 0.70 → 0.80** with the meta-eval calibration anchors shifted upward. **INLINE LINK DENSITY rule** — enrich prompt asks for 2-3+ inline markdown links per use case. **"Fact-check" labels softened across the surface** — "Source-anchored claim ratio" / "Per-claim source-anchoring detail" / "Claim source-anchoring breakdown". | Entity resolution kills the entire class of "Wikipedia returned the wrong article" / "verified-index matched the wrong company" bugs at the top of the pipeline. The 0.80 bar with the new calibration aligns "above bar" with what a sales engineer would actually ship. |
 
 End-to-end behavior:
 
@@ -171,13 +178,16 @@ Full chain visualised on the [`/architecture`](https://compastral.vercel.app/arc
 
 | Step | Model | Temperature |
 |---|---|---|
+| **Entity resolution (Step 0)** | `mistral-small-2603` | 0.1 |
 | Research synthesis | `mistral-medium-2604` (Mistral Medium 3.5) | 0.2 |
 | Industry label polish | `mistral-small-2603` | 0.1 |
 | Generation | `mistral-medium-2604` | 0.7 |
 | Scoring (self-consistency × 2) | `mistral-small-2603` | 0.2 then 0.4 |
 | Per-candidate verification | `mistral-small-2603` | 0.1 |
 | Selection + enrichment | `mistral-large-2512` (Mistral Large 3) | 0.4 |
-| Polish | `mistral-small-2603` | 0.1 |
+| Polish (std/fast: skip on fast) | `mistral-small-2603` | 0.1 |
+| **Polish (max tier)** | `mistral-large-2512` (Mistral Large 3) | 0.1 |
+| **Critique + revise (max tier)** | `mistral-large-2512` (Mistral Large 3) | 0.3 |
 | Meta-evaluation | `mistral-medium-2604` | 0.1 |
 | Source-judge | `mistral-small-2603` | 0.1 |
 | Final qualify | `mistral-small-2603` | 0.1 |
@@ -379,11 +389,13 @@ Total ~$0.20-0.30 per run.
 
 Five-company canonical benchmark (Carrefour, Veolia, BNP Paribas, L'Oréal, Mistral AI), tracked across versions in [`docs/examples/`](docs/examples). Each version's outputs are committed alongside their execution traces (`*_trace.md`) and grounding addenda (`*_grounding.md`).
 
-Latest run (v9.1, Carrefour):
-- 92% fact-check pass rate
-- 0.77 meta-evaluator confidence — sales-engineer-ready
-- 2 legitimate judge rejections (real catches: ungrounded "store management systems" claim + ungrounded "organic supply chains" claim)
-- 0 phantom claims (v9.1 anonymisation eliminated the prompt-leak class)
+Latest batches (v9.8 + v9.9, 22 runs across 16 fresh companies + 2 refusal cases):
+- **Hermès** (standard, 0.79 / 94% source-anchored) — best-case all-time on a luxury / artisan-heritage brand
+- **L'Oréal** (standard run 3, **0.88 / 88%** ✓ SE-ready since the bar is now 0.80)
+- **Carrefour** (standard, 0.68 / 83% — solid; the chain caught a `50+ proprietary brands` → `just under 30` correction inline)
+- **BNP Paribas** (standard, 0.85 / 100%) — every substantive claim source-anchored
+- **Entity resolution refusals** — `asdfqwerty` rejected in 0.6s, `ZYX Corporation` in 2.0s, before any pipeline LLM work
+- **Apple** scores low (0.35) — diagnosed as research-density limit (Apple is famously secretive); the system is honest about what it can/can't source rather than fabricating
 
 Quality signals computed per run: LLM-graded diversity, LLM-graded specificity per use case, Mistral product diversity, fact-check pass rate, TTV/cost-tier spread, source coverage. All visible in the report's quality footer.
 
